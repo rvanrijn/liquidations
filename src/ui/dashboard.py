@@ -58,12 +58,13 @@ def build_top10_table(events: list[LiquidationEvent]) -> Table:
     table.add_column("Coin")
     table.add_column("Side")
     table.add_column("Price", justify="right")
-    table.add_column("Wallet")
+    table.add_column("Exchange")
     table.add_column("Time")
 
     for i, event in enumerate(events, 1):
         side_style = "green" if event.side == "long" else "red"
         value_style = "bold yellow" if event.value_usd > 100_000 else "bold"
+        exchange_style = "yellow" if event.exchange == "bybit" else "cyan"
 
         table.add_row(
             str(i),
@@ -71,7 +72,7 @@ def build_top10_table(events: list[LiquidationEvent]) -> Table:
             event.coin,
             Text(event.side.upper(), style=side_style),
             f"${event.price:,.2f}",
-            truncate_wallet(event.wallet),
+            Text(event.exchange.upper(), style=exchange_style),
             format_time(event.timestamp),
         )
     return table
