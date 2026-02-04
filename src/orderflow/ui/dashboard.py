@@ -39,11 +39,8 @@ def format_delta(delta: float) -> Text:
 
 def build_stats_bar(aggregator: "OrderFlowAggregator") -> Text:
     """Build the stats bar showing totals."""
-    stats = aggregator.totals()
-    total = stats["total_usd"]
-    buy = stats["buy_usd"]
-    sell = stats["sell_usd"]
-    delta = buy - sell
+    buy, sell, delta = aggregator.totals()
+    total = buy + sell
 
     bar = Text()
     bar.append(" Total: ", style="dim")
@@ -222,7 +219,7 @@ class OrderFlowDashboard:
 
     def render(self) -> Group:
         """Render the full dashboard."""
-        buy_pct, sell_pct = self.aggregator.buy_sell_ratio()
+        buy_pct, sell_pct = self.aggregator.buy_sell_pressure()
 
         return Group(
             Align.center(build_stats_bar(self.aggregator)),
@@ -239,7 +236,7 @@ class OrderFlowDashboard:
                 build_status_bar(
                     self.bybit_connected,
                     self.binance_connected,
-                    self.aggregator.trade_count(),
+                    len(self.aggregator.events),
                 ),
                 style="dim",
             ),

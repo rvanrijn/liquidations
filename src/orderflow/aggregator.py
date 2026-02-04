@@ -25,6 +25,11 @@ class OrderFlowAggregator:
         self._events: Deque[TradeEvent] = deque()
         self._window_ms = window_minutes * 60 * 1000
 
+    @property
+    def events(self) -> Deque[TradeEvent]:
+        """Access the events deque."""
+        return self._events
+
     def _classify_size(self, value_usd: float) -> str:
         """Classify trade size based on USD value.
 
