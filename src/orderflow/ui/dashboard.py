@@ -108,7 +108,7 @@ def build_timeframe_table(aggregators: dict[str, "OrderFlowAggregator"]) -> Tabl
 
 def build_coin_table(aggregator: "OrderFlowAggregator") -> Table:
     """Build the coin breakdown table."""
-    table = Table(title="ORDER FLOW BY COIN (15M)", expand=True)
+    table = Table(title="ORDER FLOW BY COIN", expand=True)
     table.add_column("Coin", width=8)
     table.add_column("Buy Pressure", justify="center", width=22)
     table.add_column("Delta", justify="right", width=12)
