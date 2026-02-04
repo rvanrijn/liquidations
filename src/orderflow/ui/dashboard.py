@@ -37,13 +37,14 @@ def format_delta(delta: float) -> Text:
         return Text(f"-{format_usd(abs(delta))}", style="red")
 
 
-def build_stats_bar(aggregator: "OrderFlowAggregator") -> Text:
+def build_stats_bar(aggregator: "OrderFlowAggregator", label: str = "15M") -> Text:
     """Build the stats bar showing totals."""
     buy, sell, delta = aggregator.totals()
     total = buy + sell
 
     bar = Text()
-    bar.append(" Total: ", style="dim")
+    bar.append(f" [{label}] ", style="bold cyan")
+    bar.append("Total: ", style="dim")
     bar.append(format_usd(total), style="bold")
     bar.append(" │ ", style="dim")
     bar.append("Buy: ", style="dim")
@@ -58,9 +59,9 @@ def build_stats_bar(aggregator: "OrderFlowAggregator") -> Text:
     return bar
 
 
-def build_exchange_table(aggregator: "OrderFlowAggregator") -> Table:
+def build_exchange_table(aggregator: "OrderFlowAggregator", label: str = "15M") -> Table:
     """Build the order flow by exchange table."""
-    table = Table(title="ORDER FLOW BY EXCHANGE (15M)", expand=True)
+    table = Table(title=f"ORDER FLOW BY EXCHANGE ({label})", expand=True)
     table.add_column("Exchange", width=10)
     table.add_column("Buy $", justify="right", style="green")
     table.add_column("Sell $", justify="right", style="red")
@@ -104,9 +105,9 @@ def build_flow_bar(buy: float, sell: float, width: int = 12) -> Text:
     return bar
 
 
-def build_size_table(aggregator: "OrderFlowAggregator") -> Table:
+def build_size_table(aggregator: "OrderFlowAggregator", label: str = "15M") -> Table:
     """Build the order flow by size table."""
-    table = Table(title="ORDER FLOW BY SIZE (15M)", expand=True)
+    table = Table(title=f"ORDER FLOW BY SIZE ({label})", expand=True)
     table.add_column("Category", width=10)
     table.add_column("Buy $", justify="right", style="green")
     table.add_column("Sell $", justify="right", style="red")
@@ -204,8 +205,13 @@ def build_status_bar(
 class OrderFlowDashboard:
     """Dashboard for displaying real-time order flow data."""
 
-    def __init__(self, aggregator: "OrderFlowAggregator"):
-        self.aggregator = aggregator
+    def __init__(
+        self,
+        aggregator_15m: "OrderFlowAggregator",
+        aggregator_1h: "OrderFlowAggregator | None" = None,
+    ):
+        self.aggregator_15m = aggregator_15m
+        self.aggregator_1h = aggregator_1h
         self.bybit_connected = False
         self.binance_connected = False
         self.console = Console()
@@ -219,28 +225,51 @@ class OrderFlowDashboard:
 
     def render(self) -> Group:
         """Render the full dashboard."""
-        buy_pct, sell_pct = self.aggregator.buy_sell_pressure()
+        buy_pct_15m, sell_pct_15m = self.aggregator_15m.buy_sell_pressure()
 
-        return Group(
-            Align.center(build_stats_bar(self.aggregator)),
+        elements = [
+            Align.center(build_stats_bar(self.aggregator_15m, "15M")),
+        ]
+
+        # Add 1h stats if available
+        if self.aggregator_1h:
+            elements.append(Align.center(build_stats_bar(self.aggregator_1h, "1H")))
+
+        elements.extend([
             "",
-            Align.center(build_pressure_bar(buy_pct, sell_pct)),
+            Align.center(build_pressure_bar(buy_pct_15m, sell_pct_15m)),
             "",
-            build_exchange_table(self.aggregator),
+            build_exchange_table(self.aggregator_15m, "15M"),
+        ])
+
+        # Add 1h exchange table if available
+        if self.aggregator_1h:
+            elements.append(build_exchange_table(self.aggregator_1h, "1H"))
+
+        elements.extend([
             "",
-            build_size_table(self.aggregator),
+            build_size_table(self.aggregator_15m, "15M"),
+        ])
+
+        # Add 1h size table if available
+        if self.aggregator_1h:
+            elements.append(build_size_table(self.aggregator_1h, "1H"))
+
+        elements.extend([
             "",
-            build_live_feed(self.aggregator.recent_feed(15)),
+            build_live_feed(self.aggregator_15m.recent_feed(10)),
             "",
             Panel(
                 build_status_bar(
                     self.bybit_connected,
                     self.binance_connected,
-                    len(self.aggregator.events),
+                    len(self.aggregator_15m.events),
                 ),
                 style="dim",
             ),
-        )
+        ])
+
+        return Group(*elements)
 
     def create_live(self) -> Live:
         """Create a Rich Live display."""

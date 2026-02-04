@@ -20,12 +20,18 @@ logging.basicConfig(
 
 async def run_orderflow():
     """Main async entry point."""
-    aggregator = OrderFlowAggregator(window_minutes=15)
-    dashboard = OrderFlowDashboard(aggregator)
+    aggregator_15m = OrderFlowAggregator(window_minutes=15)
+    aggregator_1h = OrderFlowAggregator(window_minutes=60)
+    dashboard = OrderFlowDashboard(aggregator_15m, aggregator_1h)
+
+    def on_event(event):
+        """Add event to both aggregators."""
+        aggregator_15m.add_event(event)
+        aggregator_1h.add_event(event)
 
     # Create clients
-    bybit = BybitTradeClient(coins=COINS, on_event=aggregator.add_event)
-    binance = BinanceTradeClient(coins=COINS, on_event=aggregator.add_event)
+    bybit = BybitTradeClient(coins=COINS, on_event=on_event)
+    binance = BinanceTradeClient(coins=COINS, on_event=on_event)
 
     # Track connection status
     original_bybit_connect = bybit.connect
