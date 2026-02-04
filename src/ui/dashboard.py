@@ -144,6 +144,7 @@ def build_status_bar(
     bybit_connected: bool,
     binance_connected: bool,
     total_24h: float,
+    event_count: int = 0,
 ) -> Text:
     """Build the status bar."""
     status = Text()
@@ -155,6 +156,8 @@ def build_status_bar(
     status.append("BINANCE ", style="cyan")
     status.append("● " if binance_connected else "○ ", style="green" if binance_connected else "red")
 
+    status.append(" │ ", style="dim")
+    status.append(f"Events: {event_count:,}", style="bold")
     status.append(" │ ", style="dim")
     status.append(f"Total 24H: {format_usd(total_24h)}", style="bold")
     status.append(" │ ", style="dim")
@@ -193,6 +196,7 @@ class Dashboard:
                 self.bybit_connected,
                 self.binance_connected,
                 self.aggregator.total_24h(),
+                len(self.aggregator.events),
             ), style="dim"),
         )
 
