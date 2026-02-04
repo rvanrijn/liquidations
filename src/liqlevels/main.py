@@ -3,13 +3,9 @@
 
 import asyncio
 import logging
-from dotenv import load_dotenv
 
-from src.liqlevels.client import CoinglassClient
+from src.liqlevels.client import BinanceLiqClient
 from src.liqlevels.dashboard import LiqLevelsDashboard
-
-# Load .env file
-load_dotenv()
 
 # Top coins to track
 COINS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "MATIC"]
@@ -23,16 +19,7 @@ logging.basicConfig(
 async def run_liqlevels():
     """Main async entry point."""
     dashboard = LiqLevelsDashboard()
-
-    try:
-        client = CoinglassClient()
-    except ValueError as e:
-        print(f"\n❌ {e}")
-        print("\nTo use this dashboard:")
-        print("1. Get a free API key at https://www.coinglass.com/pricing")
-        print("2. Set it: export COINGLASS_API_KEY=your_key")
-        print("   Or add to .env file: COINGLASS_API_KEY=your_key\n")
-        return
+    client = BinanceLiqClient()
 
     try:
         with dashboard.create_live() as live:
@@ -42,8 +29,8 @@ async def run_liqlevels():
                 dashboard.update_data(data)
                 live.update(dashboard.render())
 
-                # Refresh every 30 seconds (API rate limits)
-                await asyncio.sleep(30)
+                # Refresh every 10 seconds
+                await asyncio.sleep(10)
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass

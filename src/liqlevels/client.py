@@ -1,7 +1,6 @@
 # src/liqlevels/client.py
-"""Coinglass API client for liquidation data."""
+"""Binance API client for estimating liquidation levels."""
 
-import os
 import asyncio
 import aiohttp
 import logging
@@ -9,16 +8,19 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://open-api-v4.coinglass.com/api"
+BINANCE_BASE = "https://fapi.binance.com"
+
+# Common leverage levels used by traders
+LEVERAGE_LEVELS = [100, 50, 25, 10, 5]
 
 
 @dataclass
 class LiquidationLevel:
-    """A liquidation level with price and amounts."""
+    """A liquidation level with price and estimated amounts."""
+    leverage: int
     price: float
-    long_liq_usd: float
-    short_liq_usd: float
-    percent_from_current: float  # Positive = above, negative = below
+    percent_from_current: float  # Negative = below (longs liq), Positive = above (shorts liq)
+    estimated_usd: float  # Estimated $ at risk
 
 
 @dataclass
@@ -26,115 +28,167 @@ class CoinLiquidations:
     """Liquidation data for a single coin."""
     coin: str
     current_price: float
-    longs_at_risk: list[LiquidationLevel]  # Sorted by % (closest first)
-    shorts_at_risk: list[LiquidationLevel]  # Sorted by % (closest first)
-    total_long_liq_usd: float
-    total_short_liq_usd: float
+    open_interest_usd: float
+    longs_at_risk: list[LiquidationLevel]  # Price drops trigger these
+    shorts_at_risk: list[LiquidationLevel]  # Price rises trigger these
 
 
-class CoinglassClient:
-    """Client for Coinglass API."""
+class BinanceLiqClient:
+    """Client for Binance Futures API to estimate liquidation levels."""
 
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or os.getenv("COINGLASS_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "COINGLASS_API_KEY not set. Get one at https://www.coinglass.com/pricing"
-            )
+    def __init__(self):
         self.session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                headers={"CG-API-KEY": self.api_key}
-            )
+            self.session = aiohttp.ClientSession()
 
     async def close(self):
         if self.session and not self.session.closed:
             await self.session.close()
 
-    async def get_liquidation_map(self, symbol: str = "BTC", range: str = "1d") -> CoinLiquidations | None:
-        """Get liquidation map data for a symbol.
-
-        Args:
-            symbol: Coin symbol (e.g., "BTC", "ETH")
-            range: Time range - "1d", "7d", or "30d"
-
-        Returns:
-            CoinLiquidations with price levels and amounts
-        """
+    async def get_price(self, symbol: str) -> float | None:
+        """Get current price for a symbol."""
         await self._ensure_session()
 
-        url = f"{BASE_URL}/futures/liquidation/aggregated-heatmap/model2"
-        params = {"symbol": symbol}
+        url = f"{BINANCE_BASE}/fapi/v1/ticker/price"
+        params = {"symbol": f"{symbol}USDT"}
 
         try:
             async with self.session.get(url, params=params) as resp:
                 if resp.status != 200:
-                    logger.warning(f"Coinglass API error: {resp.status}")
                     return None
-
                 data = await resp.json()
-                if data.get("code") != "0":
-                    logger.warning(f"Coinglass API error: {data.get('msg')}")
-                    return None
+                return float(data.get("price", 0))
+        except Exception as e:
+            logger.error(f"Error fetching price for {symbol}: {e}")
+            return None
 
-                return self._parse_liquidation_data(symbol, data.get("data", []))
+    async def get_open_interest(self, symbol: str) -> float | None:
+        """Get open interest in USD for a symbol."""
+        await self._ensure_session()
+
+        url = f"{BINANCE_BASE}/fapi/v1/openInterest"
+        params = {"symbol": f"{symbol}USDT"}
+
+        try:
+            async with self.session.get(url, params=params) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                oi = float(data.get("openInterest", 0))
+
+            # Get price to convert to USD
+            price = await self.get_price(symbol)
+            if price:
+                return oi * price
+            return None
 
         except Exception as e:
-            logger.error(f"Error fetching liquidation data: {e}")
+            logger.error(f"Error fetching OI for {symbol}: {e}")
             return None
 
-    def _parse_liquidation_data(self, symbol: str, data: list) -> CoinLiquidations | None:
-        """Parse raw API response into CoinLiquidations."""
-        if not data:
+    async def get_long_short_ratio(self, symbol: str) -> tuple[float, float] | None:
+        """Get long/short account ratio."""
+        await self._ensure_session()
+
+        url = f"{BINANCE_BASE}/futures/data/globalLongShortAccountRatio"
+        params = {"symbol": f"{symbol}USDT", "period": "5m", "limit": 1}
+
+        try:
+            async with self.session.get(url, params=params) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                if data:
+                    ratio = float(data[0].get("longShortRatio", 1))
+                    # Convert ratio to percentages
+                    long_pct = ratio / (1 + ratio) * 100
+                    short_pct = 100 - long_pct
+                    return (long_pct, short_pct)
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching L/S ratio for {symbol}: {e}")
             return None
 
-        # Data comes as list of [price, liq_amount, ...] or similar
-        # Adjust parsing based on actual API response format
+    def _calculate_liquidation_levels(
+        self,
+        current_price: float,
+        open_interest_usd: float,
+        long_pct: float,
+        short_pct: float,
+    ) -> tuple[list[LiquidationLevel], list[LiquidationLevel]]:
+        """Calculate estimated liquidation levels at common leverage points.
+
+        For longs: liquidation when price drops ~(1/leverage) below entry
+        For shorts: liquidation when price rises ~(1/leverage) above entry
+        """
         longs = []
         shorts = []
-        current_price = 0.0
-        total_long = 0.0
-        total_short = 0.0
 
-        # Try to find current price from the data
-        # The API might return price levels with liquidation amounts
-        for item in data:
-            if isinstance(item, dict):
-                price = float(item.get("price", item.get("y", 0)))
-                liq_value = float(item.get("liquidationUsd", item.get("liqUsdValue", 0)))
-                # Determine if this is long or short liq based on position
-                # Usually lower prices = long liquidations, higher = short
-                if price > 0 and liq_value > 0:
-                    level = LiquidationLevel(
-                        price=price,
-                        long_liq_usd=liq_value,
-                        short_liq_usd=0,
-                        percent_from_current=0,
-                    )
-                    longs.append(level)
-                    total_long += liq_value
-            elif isinstance(item, list) and len(item) >= 2:
-                price = float(item[0])
-                liq_value = float(item[1])
-                if price > 0:
-                    level = LiquidationLevel(
-                        price=price,
-                        long_liq_usd=liq_value,
-                        short_liq_usd=0,
-                        percent_from_current=0,
-                    )
-                    longs.append(level)
-                    total_long += liq_value
+        # Estimate OI split between longs and shorts
+        long_oi = open_interest_usd * (long_pct / 100)
+        short_oi = open_interest_usd * (short_pct / 100)
+
+        # Assume OI is distributed across leverage levels
+        # Higher leverage = smaller portion but closer to liquidation
+        leverage_weights = {100: 0.05, 50: 0.10, 25: 0.20, 10: 0.35, 5: 0.30}
+
+        for leverage in LEVERAGE_LEVELS:
+            weight = leverage_weights.get(leverage, 0.1)
+
+            # Long liquidation: price drops by ~(1/leverage)
+            # Using 0.9/leverage to account for maintenance margin
+            long_liq_pct = -0.9 / leverage * 100
+            long_liq_price = current_price * (1 + long_liq_pct / 100)
+            long_liq_usd = long_oi * weight
+
+            longs.append(LiquidationLevel(
+                leverage=leverage,
+                price=long_liq_price,
+                percent_from_current=long_liq_pct,
+                estimated_usd=long_liq_usd,
+            ))
+
+            # Short liquidation: price rises by ~(1/leverage)
+            short_liq_pct = 0.9 / leverage * 100
+            short_liq_price = current_price * (1 + short_liq_pct / 100)
+            short_liq_usd = short_oi * weight
+
+            shorts.append(LiquidationLevel(
+                leverage=leverage,
+                price=short_liq_price,
+                percent_from_current=short_liq_pct,
+                estimated_usd=short_liq_usd,
+            ))
+
+        # Sort by proximity to current price
+        longs.sort(key=lambda x: x.percent_from_current, reverse=True)
+        shorts.sort(key=lambda x: x.percent_from_current)
+
+        return longs, shorts
+
+    async def get_coin_liquidations(self, symbol: str) -> CoinLiquidations | None:
+        """Get estimated liquidation levels for a coin."""
+        price = await self.get_price(symbol)
+        if not price:
+            return None
+
+        oi = await self.get_open_interest(symbol)
+        if not oi:
+            return None
+
+        ls_ratio = await self.get_long_short_ratio(symbol)
+        long_pct, short_pct = ls_ratio if ls_ratio else (50.0, 50.0)
+
+        longs, shorts = self._calculate_liquidation_levels(price, oi, long_pct, short_pct)
 
         return CoinLiquidations(
             coin=symbol,
-            current_price=current_price,
-            longs_at_risk=sorted(longs, key=lambda x: abs(x.percent_from_current))[:10],
-            shorts_at_risk=sorted(shorts, key=lambda x: abs(x.percent_from_current))[:10],
-            total_long_liq_usd=total_long,
-            total_short_liq_usd=total_short,
+            current_price=price,
+            open_interest_usd=oi,
+            longs_at_risk=longs,
+            shorts_at_risk=shorts,
         )
 
     async def get_all_coins(self, coins: list[str]) -> dict[str, CoinLiquidations]:
@@ -143,9 +197,9 @@ class CoinglassClient:
 
         results = {}
         for coin in coins:
-            data = await self.get_liquidation_map(coin)
+            data = await self.get_coin_liquidations(coin)
             if data:
                 results[coin] = data
-            await asyncio.sleep(0.2)  # Rate limiting
+            await asyncio.sleep(0.1)  # Rate limiting
 
         return results
