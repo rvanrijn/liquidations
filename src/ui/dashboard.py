@@ -1,5 +1,6 @@
 from datetime import datetime
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
@@ -160,3 +161,46 @@ def build_status_bar(
     status.append("Ctrl+C exit", style="dim")
 
     return status
+
+
+class Dashboard:
+    def __init__(self, aggregator: LiquidationAggregator):
+        self.aggregator = aggregator
+        self.bybit_connected = False
+        self.binance_connected = False
+        self.console = Console()
+
+    def set_connection_status(self, exchange: str, connected: bool) -> None:
+        if exchange == "bybit":
+            self.bybit_connected = connected
+        elif exchange == "binance":
+            self.binance_connected = connected
+
+    def render(self) -> Group:
+        """Render the full dashboard."""
+        long_pct, short_pct = self.aggregator.long_short_ratio()
+
+        return Group(
+            Align.center(build_ratio_bar(long_pct, short_pct)),
+            "",
+            build_top10_table(self.aggregator.top_10()),
+            "",
+            build_coin_table(self.aggregator),
+            "",
+            build_live_feed(self.aggregator.recent_feed(15)),
+            "",
+            Panel(build_status_bar(
+                self.bybit_connected,
+                self.binance_connected,
+                self.aggregator.total_24h(),
+            ), style="dim"),
+        )
+
+    def create_live(self) -> Live:
+        """Create a Rich Live display."""
+        return Live(
+            self.render(),
+            console=self.console,
+            refresh_per_second=2,
+            screen=True,
+        )
