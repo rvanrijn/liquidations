@@ -17,3 +17,4 @@ dev = [
 
 [project.scripts]
 liq-dashboard = "src.main:main"
+orderflow = "src.orderflow.main:main"
