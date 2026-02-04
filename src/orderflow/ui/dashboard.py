@@ -74,6 +74,28 @@ def build_pressure_bar(buy_pct: float, width: int = 20) -> Text:
     return bar
 
 
+def build_top_stats_bar(aggregator: "OrderFlowAggregator") -> Text:
+    """Build the top stats bar showing totals."""
+    buy, sell, _ = aggregator.totals()
+    total = buy + sell
+    trade_count = len(aggregator.events)
+
+    bar = Text()
+    bar.append(" Trades: ", style="dim")
+    bar.append(f"{trade_count:,}", style="bold")
+    bar.append("  │  ", style="dim")
+    bar.append("Vol: ", style="dim")
+    bar.append(format_usd(total), style="bold")
+    bar.append("  │  ", style="dim")
+    bar.append("Buy: ", style="dim")
+    bar.append(format_usd(buy), style="bold green")
+    bar.append("  │  ", style="dim")
+    bar.append("Sell: ", style="dim")
+    bar.append(format_usd(sell), style="bold red")
+
+    return bar
+
+
 def build_timeframe_table(aggregators: dict[str, "OrderFlowAggregator"]) -> Table:
     """Build the timeframe comparison table."""
     table = Table(title="ORDER FLOW BY TIMEFRAME", expand=True)
@@ -230,6 +252,8 @@ class OrderFlowDashboard:
         agg_15m = self.aggregators.get("15m")
 
         return Group(
+            "",
+            Align.center(build_top_stats_bar(agg_15m) if agg_15m else Text("")),
             "",
             build_timeframe_table(self.aggregators),
             "",
