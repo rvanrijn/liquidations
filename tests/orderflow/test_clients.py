@@ -192,22 +192,19 @@ class TestBinanceTradeClient:
         """Test parsing a buy trade (m=false) from Binance."""
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
-        # Binance aggTrade message format
+        # Binance aggTrade message format (raw, no wrapper with /ws/ URL)
         # m=false means the buyer is the maker, trade is a BUY
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "E": 1700000000000,
-                "s": "BTCUSDT",
-                "a": 12345,  # Aggregate trade ID
-                "p": "90000.00",  # Price
-                "q": "0.5",  # Quantity
-                "f": 100,  # First trade ID
-                "l": 100,  # Last trade ID
-                "T": 1700000000000,  # Trade time
-                "m": False,  # m=false -> buyer is maker -> BUY
-            },
+            "e": "aggTrade",
+            "E": 1700000000000,
+            "s": "BTCUSDT",
+            "a": 12345,  # Aggregate trade ID
+            "p": "90000.00",  # Price
+            "q": "0.5",  # Quantity
+            "f": 100,  # First trade ID
+            "l": 100,  # Last trade ID
+            "T": 1700000000000,  # Trade time
+            "m": False,  # m=false -> buyer is maker -> BUY
         }
 
         event = client.parse_message(data)
@@ -225,16 +222,13 @@ class TestBinanceTradeClient:
 
         # m=true means the seller is the maker, trade is a SELL
         data = {
-            "stream": "ethusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "E": 1700000000000,
-                "s": "ETHUSDT",
-                "p": "3400.00",
-                "q": "10.0",
-                "T": 1700000000000,
-                "m": True,  # m=true -> seller is maker -> SELL
-            },
+            "e": "aggTrade",
+            "E": 1700000000000,
+            "s": "ETHUSDT",
+            "p": "3400.00",
+            "q": "10.0",
+            "T": 1700000000000,
+            "m": True,  # m=true -> seller is maker -> SELL
         }
 
         event = client.parse_message(data)
@@ -246,15 +240,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "1.0",
-                "T": 1700000000000,
-                "m": True,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "1.0",
+            "T": 1700000000000,
+            "m": True,
         }
 
         event = client.parse_message(data)
@@ -266,15 +257,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "1.0",
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "1.0",
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)
@@ -292,15 +280,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "0.01",  # = $900 value
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "0.01",  # = $900 value
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)
@@ -311,15 +296,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "20.0",  # $1.8M value
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "20.0",  # $1.8M value
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)
@@ -331,15 +313,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "5.0",  # $450K value
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "5.0",  # $450K value
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)
@@ -351,15 +330,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "0.5",  # $45K value
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "0.5",  # $45K value
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)
@@ -371,15 +347,12 @@ class TestBinanceTradeClient:
         client = BinanceTradeClient(coins=["BTC"], on_event=lambda e: None)
 
         data = {
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "s": "BTCUSDT",
-                "p": "90000.00",
-                "q": "0.05",  # $4.5K value
-                "T": 1700000000000,
-                "m": False,
-            },
+            "e": "aggTrade",
+            "s": "BTCUSDT",
+            "p": "90000.00",
+            "q": "0.05",  # $4.5K value
+            "T": 1700000000000,
+            "m": False,
         }
 
         event = client.parse_message(data)

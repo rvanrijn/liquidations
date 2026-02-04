@@ -14,9 +14,9 @@ class BinanceTradeClient(BaseTradeClient):
 
     def __init__(self, coins: list[str], on_event):
         super().__init__(coins, on_event)
-        # Binance uses combined stream URL for aggregate trades
-        streams = ",".join(f"{coin.lower()}usdt@aggTrade" for coin in coins)
-        self.ws_url = f"wss://fstream.binance.com/stream?streams={streams}"
+        # Binance uses /ws/ URL with streams separated by /
+        streams = "/".join(f"{coin.lower()}usdt@aggTrade" for coin in coins)
+        self.ws_url = f"wss://fstream.binance.com/ws/{streams}"
 
     def get_subscribe_message(self) -> dict | None:
         # Binance combined stream doesn't need subscription message
@@ -35,25 +35,22 @@ class BinanceTradeClient(BaseTradeClient):
             return "small"
 
     def parse_message(self, data: dict) -> TradeEvent | None:
+        # With /ws/ URL format, messages come raw (no wrapper)
         # Check if this is an aggTrade message
-        if "data" not in data:
-            return None
-
-        trade_data = data["data"]
-        if trade_data.get("e") != "aggTrade":
+        if data.get("e") != "aggTrade":
             return None
 
         # Extract coin from symbol (e.g., "BTCUSDT" -> "BTC")
-        symbol = trade_data.get("s", "")
+        symbol = data.get("s", "")
         coin = symbol.replace("USDT", "").replace("PERP", "")
 
         # IMPORTANT: m=true means buyer is maker = SELL taker
         # m=false means seller is maker = BUY taker
-        is_buyer_maker = trade_data.get("m", False)
+        is_buyer_maker = data.get("m", False)
         side = "sell" if is_buyer_maker else "buy"
 
-        price = float(trade_data.get("p", 0))
-        quantity = float(trade_data.get("q", 0))
+        price = float(data.get("p", 0))
+        quantity = float(data.get("q", 0))
         value_usd = quantity * price
 
         # Filter out trades below $1,000
@@ -67,6 +64,6 @@ class BinanceTradeClient(BaseTradeClient):
             size=quantity,
             price=price,
             value_usd=value_usd,
-            timestamp=trade_data.get("T", 0),
+            timestamp=data.get("T", 0),
             size_category=self._classify_size(value_usd),
         )
