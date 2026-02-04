@@ -1,0 +1,19 @@
+[project]
+name = "liquidations"
+version = "0.1.0"
+description = "Real-time multi-exchange liquidation dashboard"
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=12.0",
+    "rich>=13.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+liq-dashboard = "src.main:main"
