@@ -29,8 +29,8 @@ class BaseExchangeClient(ABC):
         pass
 
     @abstractmethod
-    def get_subscribe_message(self) -> dict | list[dict]:
-        """Return subscription message(s) for the WebSocket."""
+    def get_subscribe_message(self) -> dict | list[dict] | None:
+        """Return subscription message(s) for the WebSocket, or None if not needed."""
         pass
 
     async def connect(self) -> None:
@@ -44,13 +44,14 @@ class BaseExchangeClient(ABC):
                     self._reconnect_delay = 1
                     logger.info(f"{self.exchange_name}: Connected")
 
-                    # Send subscription
+                    # Send subscription if needed
                     sub_msg = self.get_subscribe_message()
-                    if isinstance(sub_msg, list):
-                        for msg in sub_msg:
-                            await ws.send(__import__("json").dumps(msg))
-                    else:
-                        await ws.send(__import__("json").dumps(sub_msg))
+                    if sub_msg is not None:
+                        if isinstance(sub_msg, list):
+                            for msg in sub_msg:
+                                await ws.send(__import__("json").dumps(msg))
+                        else:
+                            await ws.send(__import__("json").dumps(sub_msg))
 
                     # Listen for messages
                     async for raw_msg in ws:

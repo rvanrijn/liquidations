@@ -12,9 +12,10 @@ class BinanceClient(BaseExchangeClient):
         streams = "/".join(f"{coin.lower()}usdt@forceOrder" for coin in coins)
         self.ws_url = f"wss://fstream.binance.com/stream?streams={streams}"
 
-    def get_subscribe_message(self) -> dict:
+    def get_subscribe_message(self) -> dict | None:
         # Binance combined stream doesn't need subscription message
-        return {"method": "REQUEST", "params": [], "id": 1}
+        # Streams are already specified in the URL
+        return None
 
     def parse_message(self, data: dict) -> LiquidationEvent | None:
         # Check if this is a forceOrder message
