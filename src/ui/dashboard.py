@@ -78,6 +78,21 @@ def build_top10_table(events: list[LiquidationEvent]) -> Table:
     return table
 
 
+def build_coin_ratio_bar(long_usd: float, short_usd: float, width: int = 12) -> Text:
+    """Build a mini long/short ratio bar for a coin."""
+    total = long_usd + short_usd
+    if total == 0:
+        return Text("─" * width, style="dim")
+
+    long_chars = int(width * long_usd / total)
+    short_chars = width - long_chars
+
+    bar = Text()
+    bar.append("█" * long_chars, style="green")
+    bar.append("█" * short_chars, style="red")
+    return bar
+
+
 def build_coin_table(aggregator: LiquidationAggregator) -> Table:
     """Build the liquidations by coin table."""
     table = Table(title="LIQUIDATIONS BY COIN (24H)", expand=True)
@@ -86,7 +101,7 @@ def build_coin_table(aggregator: LiquidationAggregator) -> Table:
     table.add_column("Total", justify="right")
     table.add_column("Long $", justify="right", style="green")
     table.add_column("Short $", justify="right", style="red")
-    table.add_column("Exchange", justify="right")
+    table.add_column("Long/Short", justify="center")
 
     by_coin = aggregator.by_coin()
 
@@ -94,24 +109,13 @@ def build_coin_table(aggregator: LiquidationAggregator) -> Table:
     sorted_coins = sorted(by_coin.items(), key=lambda x: x[1]["total_usd"], reverse=True)
 
     for coin, stats in sorted_coins[:10]:
-        # Calculate exchange breakdown for this coin
-        coin_events = [e for e in aggregator.events if e.coin == coin]
-        bybit_count = sum(1 for e in coin_events if e.exchange == "bybit")
-        binance_count = sum(1 for e in coin_events if e.exchange == "binance")
-        total_count = bybit_count + binance_count
-
-        if total_count > 0:
-            exchange_str = f"BB:{bybit_count * 100 // total_count}% BN:{binance_count * 100 // total_count}%"
-        else:
-            exchange_str = "-"
-
         table.add_row(
             coin,
             f"{stats['count']:,}",
             format_usd(stats["total_usd"]),
             format_usd(stats["long_usd"]),
             format_usd(stats["short_usd"]),
-            exchange_str,
+            build_coin_ratio_bar(stats["long_usd"], stats["short_usd"]),
         )
     return table
 
