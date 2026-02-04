@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.orderflow.aggregator import OrderFlowAggregator
-    from src.orderflow.models import OrderFlowEvent
+    from src.orderflow.models import TradeEvent
 
 
 def format_usd(value: float) -> str:
@@ -37,66 +37,35 @@ def format_delta(delta: float) -> Text:
         return Text(f"-{format_usd(abs(delta))}", style="red")
 
 
-def build_stats_bar(aggregator: "OrderFlowAggregator", label: str = "15M") -> Text:
-    """Build the stats bar showing totals."""
-    buy, sell, delta = aggregator.totals()
-    total = buy + sell
-
-    bar = Text()
-    bar.append(f" [{label}] ", style="bold cyan")
-    bar.append("Total: ", style="dim")
-    bar.append(format_usd(total), style="bold")
-    bar.append(" │ ", style="dim")
-    bar.append("Buy: ", style="dim")
-    bar.append(format_usd(buy), style="green")
-    bar.append(" │ ", style="dim")
-    bar.append("Sell: ", style="dim")
-    bar.append(format_usd(sell), style="red")
-    bar.append(" │ ", style="dim")
-    bar.append("Delta: ", style="dim")
-    bar.append_text(format_delta(delta))
-
-    return bar
+def get_bias(delta: float) -> Text:
+    """Get bias indicator based on delta."""
+    if delta > 0:
+        return Text("BULLISH", style="bold green")
+    elif delta < 0:
+        return Text("BEARISH", style="bold red")
+    else:
+        return Text("NEUTRAL", style="dim")
 
 
-def build_exchange_table(aggregator: "OrderFlowAggregator", label: str = "15M") -> Table:
-    """Build the order flow by exchange table."""
-    table = Table(title=f"ORDER FLOW BY EXCHANGE ({label})", expand=True)
-    table.add_column("Exchange", width=10)
-    table.add_column("Buy $", justify="right", style="green")
-    table.add_column("Sell $", justify="right", style="red")
-    table.add_column("Delta", justify="right")
-    table.add_column("Flow", justify="center", width=20)
-
-    by_exchange = aggregator.by_exchange()
-
-    for exchange in ["bybit", "binance"]:
-        stats = by_exchange.get(exchange, {"buy_usd": 0.0, "sell_usd": 0.0})
-        buy = stats["buy_usd"]
-        sell = stats["sell_usd"]
-        delta = buy - sell
-        total = buy + sell
-
-        exchange_style = "yellow" if exchange == "bybit" else "cyan"
-
-        table.add_row(
-            Text(exchange.upper(), style=exchange_style),
-            format_usd(buy),
-            format_usd(sell),
-            format_delta(delta),
-            build_flow_bar(buy, sell, width=16),
-        )
-
-    return table
+def format_pressure(buy_pct: float) -> Text:
+    """Format buy pressure as percentage with color."""
+    if buy_pct >= 60:
+        style = "bold green"
+    elif buy_pct >= 50:
+        style = "green"
+    elif buy_pct >= 40:
+        style = "red"
+    else:
+        style = "bold red"
+    return Text(f"{buy_pct:.0f}%", style=style)
 
 
-def build_flow_bar(buy: float, sell: float, width: int = 12) -> Text:
-    """Build a mini buy/sell flow bar."""
-    total = buy + sell
-    if total == 0:
+def build_pressure_bar(buy_pct: float, width: int = 20) -> Text:
+    """Build a mini pressure bar."""
+    if buy_pct == 0 and width > 0:
         return Text("─" * width, style="dim")
 
-    buy_chars = int(width * buy / total)
+    buy_chars = int(width * buy_pct / 100)
     sell_chars = width - buy_chars
 
     bar = Text()
@@ -105,55 +74,92 @@ def build_flow_bar(buy: float, sell: float, width: int = 12) -> Text:
     return bar
 
 
-def build_size_table(aggregator: "OrderFlowAggregator", label: str = "15M") -> Table:
-    """Build the order flow by size table."""
-    table = Table(title=f"ORDER FLOW BY SIZE ({label})", expand=True)
-    table.add_column("Category", width=10)
-    table.add_column("Buy $", justify="right", style="green")
-    table.add_column("Sell $", justify="right", style="red")
-    table.add_column("Delta", justify="right")
-    table.add_column("Flow", justify="center", width=20)
+def build_timeframe_table(aggregators: dict[str, "OrderFlowAggregator"]) -> Table:
+    """Build the timeframe comparison table."""
+    table = Table(title="ORDER FLOW BY TIMEFRAME", expand=True)
+    table.add_column("TF", width=6, style="cyan")
+    table.add_column("Buy Pressure", justify="center", width=22)
+    table.add_column("Delta", justify="right", width=12)
+    table.add_column("Bias", justify="center", width=10)
 
-    by_size = aggregator.by_size()
-    categories = ["whale", "large", "medium", "small"]
+    for tf in ["5m", "15m", "1h", "4h"]:
+        agg = aggregators.get(tf)
+        if not agg:
+            continue
 
-    for category in categories:
-        stats = by_size.get(category, {"buy_usd": 0.0, "sell_usd": 0.0})
-        buy = stats["buy_usd"]
-        sell = stats["sell_usd"]
-        delta = buy - sell
+        buy_pct, _ = agg.buy_sell_pressure()
+        buy, sell, delta = agg.totals()
 
-        is_whale = category == "whale"
-        cat_style = "bold yellow" if is_whale else "white"
+        # Build pressure display with bar
+        pressure_text = Text()
+        pressure_text.append_text(format_pressure(buy_pct))
+        pressure_text.append(" ")
+        pressure_text.append_text(build_pressure_bar(buy_pct, width=14))
 
         table.add_row(
-            Text(category.upper(), style=cat_style),
-            Text(format_usd(buy), style="bold yellow" if is_whale else "green"),
-            Text(format_usd(sell), style="bold yellow" if is_whale else "red"),
+            tf.upper(),
+            pressure_text,
             format_delta(delta),
-            build_flow_bar(buy, sell, width=16),
+            get_bias(delta),
         )
 
     return table
 
 
-def build_pressure_bar(buy_pct: float, sell_pct: float, width: int = 50) -> Text:
-    """Build the buy/sell pressure bar."""
-    buy_chars = int(width * buy_pct / 100)
-    sell_chars = width - buy_chars
+def build_coin_table(aggregator: "OrderFlowAggregator") -> Table:
+    """Build the coin breakdown table."""
+    table = Table(title="ORDER FLOW BY COIN (15M)", expand=True)
+    table.add_column("Coin", width=8)
+    table.add_column("Buy Pressure", justify="center", width=22)
+    table.add_column("Delta", justify="right", width=12)
+    table.add_column("Bias", justify="center", width=10)
 
-    bar = Text()
-    bar.append(" BUY ", style="bold white on green")
-    bar.append(" " + "█" * buy_chars, style="green")
-    bar.append("░" * sell_chars + " ", style="red")
-    bar.append(" SELL ", style="bold white on red")
-    bar.append(f"  ({buy_pct:.0f}% / {sell_pct:.0f}%)", style="dim")
-    return bar
+    # Get stats by coin
+    coin_stats: dict[str, dict] = {}
+    for event in aggregator.events:
+        if event.value_usd < 1000:
+            continue
+        if event.coin not in coin_stats:
+            coin_stats[event.coin] = {"buy_usd": 0.0, "sell_usd": 0.0}
+
+        if event.side == "buy":
+            coin_stats[event.coin]["buy_usd"] += event.value_usd
+        else:
+            coin_stats[event.coin]["sell_usd"] += event.value_usd
+
+    # Sort by total volume
+    sorted_coins = sorted(
+        coin_stats.items(),
+        key=lambda x: x[1]["buy_usd"] + x[1]["sell_usd"],
+        reverse=True,
+    )
+
+    for coin, stats in sorted_coins[:10]:
+        buy = stats["buy_usd"]
+        sell = stats["sell_usd"]
+        total = buy + sell
+        delta = buy - sell
+        buy_pct = (buy / total * 100) if total > 0 else 0
+
+        # Build pressure display with bar
+        pressure_text = Text()
+        pressure_text.append_text(format_pressure(buy_pct))
+        pressure_text.append(" ")
+        pressure_text.append_text(build_pressure_bar(buy_pct, width=14))
+
+        table.add_row(
+            coin,
+            pressure_text,
+            format_delta(delta),
+            get_bias(delta),
+        )
+
+    return table
 
 
-def build_live_feed(events: list["OrderFlowEvent"]) -> Table:
+def build_live_feed(events: list["TradeEvent"]) -> Table:
     """Build the live feed table for large trades."""
-    table = Table(title="LIVE FEED (Large Trades)", expand=True, show_header=True)
+    table = Table(title="LIVE FEED", expand=True, show_header=True)
     table.add_column("Time", width=10)
     table.add_column("Exchange", width=8)
     table.add_column("Coin", width=6)
@@ -205,13 +211,8 @@ def build_status_bar(
 class OrderFlowDashboard:
     """Dashboard for displaying real-time order flow data."""
 
-    def __init__(
-        self,
-        aggregator_15m: "OrderFlowAggregator",
-        aggregator_1h: "OrderFlowAggregator | None" = None,
-    ):
-        self.aggregator_15m = aggregator_15m
-        self.aggregator_1h = aggregator_1h
+    def __init__(self, aggregators: dict[str, "OrderFlowAggregator"]):
+        self.aggregators = aggregators
         self.bybit_connected = False
         self.binance_connected = False
         self.console = Console()
@@ -225,51 +226,26 @@ class OrderFlowDashboard:
 
     def render(self) -> Group:
         """Render the full dashboard."""
-        buy_pct_15m, sell_pct_15m = self.aggregator_15m.buy_sell_pressure()
+        # Use 15m aggregator for coin table and live feed
+        agg_15m = self.aggregators.get("15m")
 
-        elements = [
-            Align.center(build_stats_bar(self.aggregator_15m, "15M")),
-        ]
-
-        # Add 1h stats if available
-        if self.aggregator_1h:
-            elements.append(Align.center(build_stats_bar(self.aggregator_1h, "1H")))
-
-        elements.extend([
+        return Group(
             "",
-            Align.center(build_pressure_bar(buy_pct_15m, sell_pct_15m)),
+            build_timeframe_table(self.aggregators),
             "",
-            build_exchange_table(self.aggregator_15m, "15M"),
-        ])
-
-        # Add 1h exchange table if available
-        if self.aggregator_1h:
-            elements.append(build_exchange_table(self.aggregator_1h, "1H"))
-
-        elements.extend([
+            build_coin_table(agg_15m) if agg_15m else Text("No data"),
             "",
-            build_size_table(self.aggregator_15m, "15M"),
-        ])
-
-        # Add 1h size table if available
-        if self.aggregator_1h:
-            elements.append(build_size_table(self.aggregator_1h, "1H"))
-
-        elements.extend([
-            "",
-            build_live_feed(self.aggregator_15m.recent_feed(10)),
+            build_live_feed(agg_15m.recent_feed(12) if agg_15m else []),
             "",
             Panel(
                 build_status_bar(
                     self.bybit_connected,
                     self.binance_connected,
-                    len(self.aggregator_15m.events),
+                    len(agg_15m.events) if agg_15m else 0,
                 ),
                 style="dim",
             ),
-        ])
-
-        return Group(*elements)
+        )
 
     def create_live(self) -> Live:
         """Create a Rich Live display."""

@@ -20,14 +20,18 @@ logging.basicConfig(
 
 async def run_orderflow():
     """Main async entry point."""
-    aggregator_15m = OrderFlowAggregator(window_minutes=15)
-    aggregator_1h = OrderFlowAggregator(window_minutes=60)
-    dashboard = OrderFlowDashboard(aggregator_15m, aggregator_1h)
+    aggregators = {
+        "5m": OrderFlowAggregator(window_minutes=5),
+        "15m": OrderFlowAggregator(window_minutes=15),
+        "1h": OrderFlowAggregator(window_minutes=60),
+        "4h": OrderFlowAggregator(window_minutes=240),
+    }
+    dashboard = OrderFlowDashboard(aggregators)
 
     def on_event(event):
-        """Add event to both aggregators."""
-        aggregator_15m.add_event(event)
-        aggregator_1h.add_event(event)
+        """Add event to all aggregators."""
+        for agg in aggregators.values():
+            agg.add_event(event)
 
     # Create clients
     bybit = BybitTradeClient(coins=COINS, on_event=on_event)
