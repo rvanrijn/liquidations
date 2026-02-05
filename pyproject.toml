@@ -20,3 +20,8 @@ dev = [
 liq-dashboard = "src.main:main"
 orderflow = "src.orderflow.main:main"
 liqlevels = "src.liqlevels.main:main"
+scalper = "src.scalper.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
