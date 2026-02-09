@@ -24,6 +24,10 @@ scalper = "src.scalper.main:main"
 scalper-backtest = "src.scalper.backtest:main"
 liqhunt = "src.liqhunt.main:main"
 
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
