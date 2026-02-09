@@ -21,6 +21,8 @@ liq-dashboard = "src.main:main"
 orderflow = "src.orderflow.main:main"
 liqlevels = "src.liqlevels.main:main"
 scalper = "src.scalper.main:main"
+scalper-backtest = "src.scalper.backtest:main"
+liqhunt = "src.liqhunt.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
