@@ -172,7 +172,9 @@ class LiqHuntDashboard:
 
         longs_table = build_longs_table(self.data)
         shorts_table = build_shorts_table(self.data)
-        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats)
+        btc = self.data.get("BTC")
+        btc_price = btc.current_price if btc else 0.0
+        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price)
         magnet_breakdown = build_magnet_breakdown(
             self.monitor_stats, self.monitor_stats_15x, self.monitor_stats_20x,
         )

@@ -223,6 +223,7 @@ def build_status_bar(connected: bool, last_update: str, coin_count: int) -> Text
 def build_magnet_status(
     snapshot: "LiqSnapshot | None",
     stats: dict,
+    current_price: float = 0.0,
 ) -> Panel:
     """Build current magnet battle status + all-time accuracy."""
     content = Text()
@@ -230,7 +231,7 @@ def build_magnet_status(
     # Current battle
     if snapshot:
         content.append("ACTIVE BATTLE  ", style="bold yellow")
-        content.append(f"BTC {format_price(snapshot.btc_price)}", style="bold")
+        content.append(f"BTC {format_price(current_price or snapshot.btc_price)}", style="bold")
         content.append("  │  ", style="dim")
         content.append("Long $: ", style="red")
         content.append(format_usd(snapshot.total_long_usd), style="bold red")
@@ -249,6 +250,17 @@ def build_magnet_status(
             content.append(f"{elapsed / 60:.0f}m", style="dim")
         else:
             content.append(f"{elapsed:.0f}s", style="dim")
+
+        # Show distance to each target
+        p = current_price or snapshot.btc_price
+        long_dist = (p - snapshot.nearest_long_price) / p * 100
+        short_dist = (snapshot.nearest_short_price - p) / p * 100
+        content.append("\n")
+        content.append(f" Long liq {format_price(snapshot.nearest_long_price)}", style="red")
+        content.append(f" ({long_dist:.2f}% away)", style="dim")
+        content.append("  │  ", style="dim")
+        content.append(f"Short liq {format_price(snapshot.nearest_short_price)}", style="green")
+        content.append(f" ({short_dist:.2f}% away)", style="dim")
     else:
         content.append("WAITING  ", style="dim")
         content.append("No active battle (insufficient imbalance)", style="dim")
@@ -368,7 +380,9 @@ class LiqLevelsDashboard:
         shorts_table = build_shorts_table(self.data)
 
         # Build magnet monitor panels
-        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats)
+        btc = self.data.get("BTC")
+        btc_price = btc.current_price if btc else 0.0
+        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price)
         magnet_breakdown = build_magnet_breakdown(
             self.monitor_stats, self.monitor_stats_15x, self.monitor_stats_20x,
         )

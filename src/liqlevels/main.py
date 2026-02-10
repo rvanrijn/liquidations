@@ -10,7 +10,7 @@ from src.liqlevels.database import MagnetDatabase
 from src.liqlevels.monitor import MagnetMonitor
 
 # Top coins to track
-COINS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "MATIC"]
+COINS = ["BTC", "ETH", "SOL"]
 
 logging.basicConfig(
     level=logging.WARNING,
