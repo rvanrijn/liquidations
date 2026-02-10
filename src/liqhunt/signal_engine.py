@@ -36,6 +36,8 @@ class SignalEngine:
         btc_price: float,
         liq_levels_long: list[float],
         liq_levels_short: list[float],
+        btc_delta_1m: float = 0.0,
+        oi_change_pct: float = 0.0,
     ) -> Signal | None:
         """Run the full decision tree. Returns Signal or None."""
 
@@ -125,6 +127,18 @@ class SignalEngine:
             )
             return None
 
+        # 4b. Orderflow confirmation — delta must align with signal direction
+        if magnet_side == "LONG" and btc_delta_1m < 0:
+            self.rejection_reason = (
+                f"Orderflow opposes LONG (1m delta ${btc_delta_1m / 1e6:+.1f}M)"
+            )
+            return None
+        elif magnet_side == "SHORT" and btc_delta_1m > 0:
+            self.rejection_reason = (
+                f"Orderflow opposes SHORT (1m delta ${btc_delta_1m / 1e6:+.1f}M)"
+            )
+            return None
+
         # 5. Risk check
         if magnet_side == "LONG":
             direction = "LONG"
@@ -155,9 +169,11 @@ class SignalEngine:
         # Build reasoning
         swept_side = "longs" if magnet_side == "LONG" else "shorts"
         target_side = "short" if magnet_side == "LONG" else "long"
+        oi_label = "liqs" if oi_change_pct < 0 else "new pos"
         reasoning = (
             f"{swept_side.title()} swept at ${sweep.extreme:,.0f}, "
             f"reclaim confirmed above magnet. "
+            f"OI {oi_change_pct:+.1f}% ({oi_label}). "
             f"Targeting {target_side} cluster at ${primary_target:,.0f}."
         )
 

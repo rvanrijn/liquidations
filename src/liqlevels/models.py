@@ -16,6 +16,7 @@ class LiqSnapshot:
     total_long_usd: float
     total_short_usd: float
     timestamp: float  # time.time()
+    open_interest_usd: float = 0.0
 
     @property
     def bigger_side(self) -> str:
@@ -48,3 +49,6 @@ class Battle:
     total_short_usd: float
     timestamp: float  # When battle was resolved
     id: int | None = None
+    oi_start_usd: float = 0.0
+    oi_end_usd: float = 0.0
+    oi_change_pct: float = 0.0

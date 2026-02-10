@@ -224,6 +224,7 @@ def build_magnet_status(
     snapshot: "LiqSnapshot | None",
     stats: dict,
     current_price: float = 0.0,
+    current_oi: float = 0.0,
 ) -> Panel:
     """Build current magnet battle status + all-time accuracy."""
     from src.liqlevels.models import RESOLVE_MOVE_PCT
@@ -269,6 +270,16 @@ def build_magnet_status(
         content.append(f" {arrow} {move_pct:+.3f}% toward {toward}", style=move_style)
         content.append(f"  │  Resolves at +/-{RESOLVE_MOVE_PCT}%", style="dim")
         content.append(f"  │  From {format_price(snapshot.btc_price)}", style="dim")
+
+        # OI change since snapshot
+        if snapshot.open_interest_usd > 0 and current_oi > 0:
+            oi_delta_pct = (current_oi - snapshot.open_interest_usd) / snapshot.open_interest_usd * 100
+            content.append("\n")
+            content.append(f" OI: {format_usd(current_oi)}", style="bold")
+            if oi_delta_pct < 0:
+                content.append(f" ({oi_delta_pct:+.2f}% = liqs)", style="bold red")
+            else:
+                content.append(f" ({oi_delta_pct:+.2f}% = new pos)", style="bold green")
     else:
         content.append("WAITING  ", style="dim")
         content.append("No active battle (insufficient imbalance)", style="dim")
@@ -314,6 +325,7 @@ def build_battle_log(recent_battles: list["Battle"]) -> Table:
     table.add_column("Moved", justify="center", width=6)
     table.add_column("OK?", justify="center", width=4)
     table.add_column("Move%", justify="right", width=7)
+    table.add_column("OI%", justify="right", width=7)
     table.add_column("Ratio", justify="right", width=6)
     table.add_column("Dur", justify="right", width=7)
 
@@ -325,6 +337,9 @@ def build_battle_log(recent_battles: list["Battle"]) -> Table:
         dur_min = b.duration_seconds / 60
         dur_str = f"{dur_min:.0f}m" if dur_min >= 1 else f"{b.duration_seconds:.0f}s"
 
+        oi_text = Text(f"{b.oi_change_pct:+.1f}%",
+                       style="red" if b.oi_change_pct < 0 else "green") if b.oi_change_pct else Text("-", style="dim")
+
         table.add_row(
             str(i),
             ts,
@@ -334,6 +349,7 @@ def build_battle_log(recent_battles: list["Battle"]) -> Table:
             Text(b.moved_side[:1], style=moved_style),
             ok,
             f"{b.move_pct:+.2f}%",
+            oi_text,
             f"{b.imbalance_ratio:.2f}",
             dur_str,
         )
@@ -392,7 +408,8 @@ class LiqLevelsDashboard:
         # Build magnet monitor panels
         btc = self.data.get("BTC")
         btc_price = btc.current_price if btc else 0.0
-        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price)
+        btc_oi = btc.open_interest_usd if btc else 0.0
+        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price, btc_oi)
         magnet_breakdown = build_magnet_breakdown(
             self.monitor_stats, self.monitor_stats_15x, self.monitor_stats_20x,
         )

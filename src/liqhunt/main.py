@@ -11,6 +11,8 @@ from src.liqhunt.signal_engine import SignalEngine
 from src.liqlevels.client import BinanceLiqClient
 from src.liqlevels.database import MagnetDatabase
 from src.liqlevels.monitor import MagnetMonitor
+from src.orderflow.aggregator import OrderFlowAggregator
+from src.orderflow.clients.binance import BinanceTradeClient
 
 COINS = ["BTC", "ETH", "SOL"]
 
@@ -30,7 +32,19 @@ async def run_liqhunt():
     signal_engine = SignalEngine()
     last_announced_ts: float = 0
 
+    # BTC-only orderflow aggregator (1m window)
+    btc_flow = OrderFlowAggregator(window_minutes=1)
+
+    def on_btc_trade(event):
+        if event.coin == "BTC":
+            btc_flow.add_event(event)
+
+    btc_ws = BinanceTradeClient(coins=["BTC"], on_event=on_btc_trade)
+    ws_task = None
+
     try:
+        ws_task = asyncio.create_task(btc_ws.connect())
+
         with dashboard.create_live() as live:
             while True:
                 # 1. Fetch liq data for all coins
@@ -63,7 +77,17 @@ async def run_liqhunt():
                     liq_levels_long = [l.price for l in btc_data.longs_at_risk]
                     liq_levels_short = [l.price for l in btc_data.shorts_at_risk]
 
-                # 5. Evaluate signal
+                # 5. Get orderflow delta (1m window)
+                _, _, btc_delta_1m = btc_flow.totals()
+
+                # 5b. Compute OI change from snapshot
+                oi_change_pct = 0.0
+                if monitor.snapshot and monitor.snapshot.open_interest_usd > 0 and btc_data:
+                    current_oi = btc_data.open_interest_usd
+                    if current_oi > 0:
+                        oi_change_pct = (current_oi - monitor.snapshot.open_interest_usd) / monitor.snapshot.open_interest_usd * 100
+
+                # 6. Evaluate signal
                 signal = signal_engine.evaluate(
                     snapshot=monitor.snapshot,
                     candles=candles,
@@ -71,6 +95,8 @@ async def run_liqhunt():
                     btc_price=btc_price,
                     liq_levels_long=liq_levels_long,
                     liq_levels_short=liq_levels_short,
+                    btc_delta_1m=btc_delta_1m,
+                    oi_change_pct=oi_change_pct,
                 )
 
                 # Compute magnet price for sweep monitor display (nearest liq on bigger side)
@@ -92,6 +118,7 @@ async def run_liqhunt():
                     engine=signal_engine,
                     candle_fetcher=candle_fetcher,
                     magnet_price=magnet_price,
+                    btc_delta_1m=btc_delta_1m,
                 )
 
                 live.update(dashboard.render())
@@ -100,6 +127,12 @@ async def run_liqhunt():
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
+        if ws_task:
+            ws_task.cancel()
+            try:
+                await ws_task
+            except asyncio.CancelledError:
+                pass
         await client.close()
         magnet_db.close()
 

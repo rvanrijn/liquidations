@@ -33,13 +33,14 @@ class MagnetMonitor:
     def update(self, btc_data: CoinLiquidations) -> Battle | None:
         """Called every poll with fresh BTC data. Returns a Battle if one was just resolved."""
         price = btc_data.current_price
+        current_oi = btc_data.open_interest_usd
 
         total_long_usd = sum(l.estimated_usd for l in btc_data.longs_at_risk)
         total_short_usd = sum(l.estimated_usd for l in btc_data.shorts_at_risk)
 
         # No active snapshot → try to create one
         if self.snapshot is None:
-            self._try_snapshot(price, total_long_usd, total_short_usd)
+            self._try_snapshot(price, total_long_usd, total_short_usd, current_oi)
             return None
 
         # Invalidate if imbalance flipped sides
@@ -48,20 +49,20 @@ class MagnetMonitor:
             logger.debug("Imbalance flipped from %s to %s, resetting",
                          self.snapshot.bigger_side, current_bigger)
             self.snapshot = None
-            self._try_snapshot(price, total_long_usd, total_short_usd)
+            self._try_snapshot(price, total_long_usd, total_short_usd, current_oi)
             return None
 
         # Check if price moved enough to resolve
-        battle = self._check_resolved(price)
+        battle = self._check_resolved(price, current_oi)
         if battle:
             self.db.log_battle(battle)
             self.stats = self.db.get_stats()
             self.recent_battles = self.db.get_recent_battles()
             self.snapshot = None
-            self._try_snapshot(price, total_long_usd, total_short_usd)
+            self._try_snapshot(price, total_long_usd, total_short_usd, current_oi)
         return battle
 
-    def _try_snapshot(self, price: float, long_usd: float, short_usd: float) -> None:
+    def _try_snapshot(self, price: float, long_usd: float, short_usd: float, oi_usd: float = 0.0) -> None:
         """Create a new snapshot if imbalance is large enough."""
         bigger = max(long_usd, short_usd)
         smaller = min(long_usd, short_usd)
@@ -71,9 +72,10 @@ class MagnetMonitor:
                 total_long_usd=long_usd,
                 total_short_usd=short_usd,
                 timestamp=time(),
+                open_interest_usd=oi_usd,
             )
 
-    def _check_resolved(self, price: float) -> Battle | None:
+    def _check_resolved(self, price: float, current_oi: float = 0.0) -> Battle | None:
         """Check if price moved ±RESOLVE_MOVE_PCT from snapshot."""
         snap = self.snapshot
         move_pct = (price - snap.btc_price) / snap.btc_price * 100
@@ -84,6 +86,11 @@ class MagnetMonitor:
         # Price dropped → moved toward LONG liquidations
         # Price rose → moved toward SHORT liquidations
         moved_side = "LONG" if move_pct < 0 else "SHORT"
+
+        # OI change
+        oi_change_pct = 0.0
+        if snap.open_interest_usd > 0 and current_oi > 0:
+            oi_change_pct = (current_oi - snap.open_interest_usd) / snap.open_interest_usd * 100
 
         now = time()
         return Battle(
@@ -98,4 +105,7 @@ class MagnetMonitor:
             total_long_usd=snap.total_long_usd,
             total_short_usd=snap.total_short_usd,
             timestamp=now,
+            oi_start_usd=snap.open_interest_usd,
+            oi_end_usd=current_oi,
+            oi_change_pct=oi_change_pct,
         )

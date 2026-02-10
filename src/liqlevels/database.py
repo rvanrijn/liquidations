@@ -36,6 +36,14 @@ class MagnetDatabase:
                 timestamp REAL NOT NULL
             )
         """)
+        # Migrate: add OI columns if missing
+        for col in ("oi_start_usd", "oi_end_usd", "oi_change_pct"):
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE battles_v2 ADD COLUMN {col} REAL DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self.conn.commit()
 
     def log_battle(self, battle: Battle) -> int:
@@ -43,8 +51,9 @@ class MagnetDatabase:
             INSERT INTO battles_v2 (
                 bigger_side, moved_side, hypothesis_correct, imbalance_ratio,
                 duration_seconds, snapshot_price, resolved_price, move_pct,
-                total_long_usd, total_short_usd, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_long_usd, total_short_usd, timestamp,
+                oi_start_usd, oi_end_usd, oi_change_pct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             battle.bigger_side,
             battle.moved_side,
@@ -57,6 +66,9 @@ class MagnetDatabase:
             battle.total_long_usd,
             battle.total_short_usd,
             battle.timestamp,
+            battle.oi_start_usd,
+            battle.oi_end_usd,
+            battle.oi_change_pct,
         ))
         self.conn.commit()
         return cursor.lastrowid
@@ -123,6 +135,9 @@ class MagnetDatabase:
             total_long_usd=row["total_long_usd"],
             total_short_usd=row["total_short_usd"],
             timestamp=row["timestamp"],
+            oi_start_usd=row["oi_start_usd"] or 0.0,
+            oi_end_usd=row["oi_end_usd"] or 0.0,
+            oi_change_pct=row["oi_change_pct"] or 0.0,
         )
 
     def close(self) -> None:

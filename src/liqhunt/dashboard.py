@@ -67,6 +67,7 @@ def build_signal_panel(signal: Signal | None, rejection: str) -> Panel:
 def build_sweep_monitor(
     candle_fetcher: "CandleFetcher",
     magnet_price: float | None,
+    btc_delta_1m: float = 0.0,
 ) -> Panel:
     """Build the sweep monitor strip showing current candle stats vs thresholds."""
     content = Text()
@@ -91,6 +92,15 @@ def build_sweep_monitor(
             content.append(f"zone +/-{format_price(zone)}", style="dim")
     else:
         content.append(" Waiting for candle data...", style="dim")
+
+    # Orderflow delta
+    content.append("  |  ", style="dim")
+    if btc_delta_1m != 0:
+        delta_m = btc_delta_1m / 1e6
+        delta_style = "bold green" if btc_delta_1m > 0 else "bold red"
+        content.append(f"1m delta {delta_m:+.1f}M", style=delta_style)
+    else:
+        content.append("1m delta --", style="dim")
 
     return Panel(content, title="SWEEP MONITOR", border_style="dim cyan")
 
@@ -130,6 +140,7 @@ class LiqHuntDashboard:
         self.rejection_reason: str = ""
         self.candle_fetcher: "CandleFetcher | None" = None
         self.magnet_price: float | None = None
+        self.btc_delta_1m: float = 0.0
 
     def update_data(self, data: dict[str, "CoinLiquidations"]):
         self.data = data
@@ -156,11 +167,13 @@ class LiqHuntDashboard:
         engine: "SignalEngine",
         candle_fetcher: "CandleFetcher",
         magnet_price: float | None,
+        btc_delta_1m: float = 0.0,
     ):
         self.signal = signal
         self.rejection_reason = engine.rejection_reason
         self.candle_fetcher = candle_fetcher
         self.magnet_price = magnet_price
+        self.btc_delta_1m = btc_delta_1m
 
     def render(self) -> Group:
         if not self.data:
@@ -174,7 +187,8 @@ class LiqHuntDashboard:
         shorts_table = build_shorts_table(self.data)
         btc = self.data.get("BTC")
         btc_price = btc.current_price if btc else 0.0
-        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price)
+        btc_oi = btc.open_interest_usd if btc else 0.0
+        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price, btc_oi)
         magnet_breakdown = build_magnet_breakdown(
             self.monitor_stats, self.monitor_stats_15x, self.monitor_stats_20x,
         )
@@ -182,7 +196,7 @@ class LiqHuntDashboard:
 
         signal_panel = build_signal_panel(self.signal, self.rejection_reason)
         sweep_panel = (
-            build_sweep_monitor(self.candle_fetcher, self.magnet_price)
+            build_sweep_monitor(self.candle_fetcher, self.magnet_price, self.btc_delta_1m)
             if self.candle_fetcher
             else Panel(Text(" Waiting...", style="dim"), title="SWEEP MONITOR", border_style="dim")
         )
