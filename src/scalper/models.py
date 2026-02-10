@@ -75,7 +75,7 @@ class BotState:
     risk_per_trade: float = 0.01  # 1%
     leverage: int = 15
     max_stop_pct: float = 0.0025  # 0.25%
-    max_daily_trades: int = 6
+    max_daily_trades: int = 4
     max_daily_loss_r: float = -2.0
 
     @property

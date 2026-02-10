@@ -1,52 +1,42 @@
 """VWAP (Volume Weighted Average Price) calculator for scalping bot.
 
-The VWAP is calculated as: sum(price * volume) / sum(volume)
-It resets at 00:00 UTC daily.
+Rolling 5-minute VWAP: sum(price * volume) / sum(volume) over the last 5 minutes.
 """
 
-from datetime import date, datetime, timezone
+from collections import deque
+from time import time
 
 
 class VWAPCalculator:
-    """Calculate VWAP with automatic daily reset at midnight UTC."""
+    """Calculate rolling 5-minute VWAP from trade ticks."""
 
-    def __init__(self):
-        self._cum_pv: float = 0.0  # cumulative price * volume
-        self._cum_volume: float = 0.0  # cumulative volume
-        self._last_reset_date: date | None = None
+    def __init__(self, window_ms: int = 5 * 60 * 1000):
+        self._window_ms = window_ms
+        self._ticks: deque[tuple[int, float, float]] = deque()  # (ts_ms, price, volume)
 
     def update(self, price: float, volume: float) -> None:
-        """Add a trade to VWAP calculation. Auto-resets at midnight UTC.
+        """Add a trade tick.
 
         Args:
             price: Trade price
             volume: Trade volume
         """
-        # Check if we need to reset (new UTC day)
-        current_date = datetime.now(timezone.utc).date()
-
-        if self._last_reset_date is None:
-            self._last_reset_date = current_date
-        elif current_date > self._last_reset_date:
-            self.reset()
-            self._last_reset_date = current_date
-
-        # Accumulate price * volume and volume
-        self._cum_pv += price * volume
-        self._cum_volume += volume
+        now_ms = int(time() * 1000)
+        self._ticks.append((now_ms, price, volume))
+        cutoff = now_ms - self._window_ms
+        while self._ticks and self._ticks[0][0] < cutoff:
+            self._ticks.popleft()
 
     @property
     def vwap(self) -> float:
-        """Current VWAP value. Returns 0.0 if no data.
-
-        Returns:
-            Current VWAP or 0.0 if no volume accumulated
-        """
-        if self._cum_volume == 0.0:
+        """Current rolling VWAP. Returns 0.0 if no data."""
+        if not self._ticks:
             return 0.0
-        return self._cum_pv / self._cum_volume
-
-    def reset(self) -> None:
-        """Reset VWAP accumulation."""
-        self._cum_pv = 0.0
-        self._cum_volume = 0.0
+        cum_pv = 0.0
+        cum_vol = 0.0
+        for _, p, v in self._ticks:
+            cum_pv += p * v
+            cum_vol += v
+        if cum_vol == 0.0:
+            return 0.0
+        return cum_pv / cum_vol

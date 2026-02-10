@@ -1,4 +1,5 @@
 from datetime import datetime
+from rich.columns import Columns
 from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
@@ -81,6 +82,7 @@ def build_header_bar(state: BotState, current_price: float, unrealized_pnl: floa
 
 def build_conditions_panel(
     bias: Bias | None,
+    delta_1m: float,
     delta_5m: float,
     buy_pressure: float,
     vwap: float,
@@ -104,6 +106,10 @@ def build_conditions_panel(
         # Delta 15m
         delta_15m_text = format_pnl(bias.delta_15m) if bias.delta_15m else Text("$0", style="dim")
         table.add_row("Delta 15m", delta_15m_text)
+
+        # Delta 1m
+        delta_1m_text = format_pnl(delta_1m) if delta_1m else Text("$0", style="dim")
+        table.add_row("Delta 1m", delta_1m_text)
 
         # Delta 5m
         delta_5m_text = format_pnl(delta_5m) if delta_5m else Text("$0", style="dim")
@@ -136,6 +142,46 @@ def build_conditions_panel(
         table.add_row("Status", Text("Waiting for data...", style="dim"))
 
     return table
+
+
+def build_entry_checklist(
+    short_conds: list[tuple[str, bool, str]],
+    long_conds: list[tuple[str, bool, str]],
+) -> Columns:
+    """Build side-by-side entry condition checklists."""
+    # SHORT table
+    short_table = Table(title="SHORT CONDITIONS", expand=True, show_header=True)
+    short_table.add_column("", width=2)
+    short_table.add_column("Condition", style="dim")
+    short_table.add_column("Value", justify="right")
+
+    short_met = 0
+    for label, met, value in short_conds:
+        icon = Text("V ", style="bold green") if met else Text("X ", style="bold red")
+        val_style = "green" if met else "red"
+        short_table.add_row(icon, label, Text(value, style=val_style))
+        if met:
+            short_met += 1
+
+    short_table.caption = f"{short_met}/{len(short_conds)} conditions met"
+
+    # LONG table
+    long_table = Table(title="LONG CONDITIONS", expand=True, show_header=True)
+    long_table.add_column("", width=2)
+    long_table.add_column("Condition", style="dim")
+    long_table.add_column("Value", justify="right")
+
+    long_met = 0
+    for label, met, value in long_conds:
+        icon = Text("V ", style="bold green") if met else Text("X ", style="bold red")
+        val_style = "green" if met else "red"
+        long_table.add_row(icon, label, Text(value, style=val_style))
+        if met:
+            long_met += 1
+
+    long_table.caption = f"{long_met}/{len(long_conds)} conditions met"
+
+    return Columns([short_table, long_table], expand=True, equal=True)
 
 
 def build_position_panel(position: Position | None, current_price: float) -> Panel:
@@ -274,12 +320,15 @@ class ScalperDashboard:
         self.state = state
         self.current_price = 0.0
         self.unrealized_pnl = 0.0
+        self.delta_1m = 0.0
         self.delta_5m = 0.0
         self.buy_pressure = 0.0
         self.vwap = 0.0
         self.high_5m = 0.0
         self.low_5m = 0.0
         self.today_trades: list[TradeRecord] = []
+        self.short_conds: list[tuple[str, bool, str]] = []
+        self.long_conds: list[tuple[str, bool, str]] = []
         self.hl_connected = False
         self.binance_connected = False
         self.bybit_connected = False
@@ -296,18 +345,24 @@ class ScalperDashboard:
 
     def render(self) -> Group:
         """Render the full dashboard."""
+        # Side-by-side: market conditions + entry checklists
+        conditions = build_conditions_panel(
+            self.state.last_bias,
+            self.delta_1m,
+            self.delta_5m,
+            self.buy_pressure,
+            self.vwap,
+            self.high_5m,
+            self.low_5m,
+        )
+
+        checklist = build_entry_checklist(self.short_conds, self.long_conds)
+
         return Group(
             "",
             Align.center(build_header_bar(self.state, self.current_price, self.unrealized_pnl)),
             "",
-            build_conditions_panel(
-                self.state.last_bias,
-                self.delta_5m,
-                self.buy_pressure,
-                self.vwap,
-                self.high_5m,
-                self.low_5m,
-            ),
+            Columns([conditions, checklist], expand=True),
             "",
             build_position_panel(self.state.position, self.current_price),
             "",

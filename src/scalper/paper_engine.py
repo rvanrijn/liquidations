@@ -112,6 +112,7 @@ class PaperEngine:
         if is_partial:
             pos.tp1_hit = True
             pos.remaining_pct = 0.5
+            pos.stop_loss = pos.entry_price  # Move stop to breakeven
             logger.info(
                 f"TP1 HIT {pos.side} @ ${exit_price:,.2f} | "
                 f"P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%) | "

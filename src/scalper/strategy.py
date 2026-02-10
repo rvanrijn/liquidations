@@ -67,69 +67,28 @@ def check_short_entry(
     high_5m: float,
     delta_5m: float,
     buy_pressure: float,
-    has_large_buys_30s: bool,
+    obv_macd_bearish: bool,
     state: BotState,
 ) -> bool:
-    """Check if all SHORT entry conditions are met.
-
-    1. bias.direction == "SHORT"
-    2. price within 0.1-0.3% of high_5m (i.e., price >= high_5m * 0.997 and price <= high_5m * 0.999)
-    3. delta_5m < 0
-    4. buy_pressure < 50.0
-    5. has_large_buys_30s is False
-    6. state.position is None
-    7. state.is_active is True
-    8. state.daily_trades < state.max_daily_trades
-    9. state.daily_pnl / state.risk_usd > state.max_daily_loss_r (not blown daily loss)
-
-    Args:
-        bias: Current directional bias
-        price: Current BTC price
-        high_5m: 5-minute high
-        delta_5m: 5-minute cumulative delta
-        buy_pressure: Buy pressure percentage
-        has_large_buys_30s: True if large buys detected in last 30s
-        state: Current bot state
-
-    Returns:
-        True if all conditions met, False otherwise
-    """
-    # 1. Check bias
+    """Check if all SHORT entry conditions are met."""
     if bias.direction != "SHORT":
         return False
-
-    # 2. Price within 0.1-0.3% of high_5m
+    if not obv_macd_bearish:
+        return False
     if not (price >= high_5m * 0.997 and price <= high_5m * 0.999):
         return False
-
-    # 3. Negative delta
     if delta_5m >= 0:
         return False
-
-    # 4. Low buy pressure
     if buy_pressure >= 50.0:
         return False
-
-    # 5. No large buys
-    if has_large_buys_30s:
-        return False
-
-    # 6. No existing position
     if state.position is not None:
         return False
-
-    # 7. Bot is active
     if not state.is_active:
         return False
-
-    # 8. Daily trades limit
     if state.daily_trades >= state.max_daily_trades:
         return False
-
-    # 9. Daily loss limit
     if state.daily_pnl / state.risk_usd <= state.max_daily_loss_r:
         return False
-
     return True
 
 
@@ -139,70 +98,78 @@ def check_long_entry(
     low_5m: float,
     delta_5m: float,
     buy_pressure: float,
-    has_large_sells_30s: bool,
+    obv_macd_bullish: bool,
     state: BotState,
 ) -> bool:
-    """Check if all LONG entry conditions are met.
-
-    1. bias.direction == "LONG"
-    2. price within 0.3-0.5% of low_5m (i.e., price >= low_5m * 1.003 and price <= low_5m * 1.005)
-    3. delta_5m > 0 (strongly positive)
-    4. buy_pressure > 50.0
-    5. has_large_sells_30s is False
-    6. state.position is None
-    7. state.is_active is True
-    8. state.daily_trades < state.max_daily_trades
-    9. state.daily_pnl / state.risk_usd > state.max_daily_loss_r
-
-    Args:
-        bias: Current directional bias
-        price: Current BTC price
-        low_5m: 5-minute low
-        delta_5m: 5-minute cumulative delta
-        buy_pressure: Buy pressure percentage
-        has_large_sells_30s: True if large sells detected in last 30s
-        state: Current bot state
-
-    Returns:
-        True if all conditions met, False otherwise
-    """
-    # 1. Check bias
+    """Check if all LONG entry conditions are met."""
     if bias.direction != "LONG":
         return False
-
-    # 2. Price within 0.3-0.5% of low_5m
+    if not obv_macd_bullish:
+        return False
     if not (price >= low_5m * 1.003 and price <= low_5m * 1.005):
         return False
-
-    # 3. Positive delta
     if delta_5m <= 0:
         return False
-
-    # 4. High buy pressure
     if buy_pressure <= 50.0:
         return False
-
-    # 5. No large sells
-    if has_large_sells_30s:
-        return False
-
-    # 6. No existing position
     if state.position is not None:
         return False
-
-    # 7. Bot is active
     if not state.is_active:
         return False
-
-    # 8. Daily trades limit
     if state.daily_trades >= state.max_daily_trades:
         return False
-
-    # 9. Daily loss limit
     if state.daily_pnl / state.risk_usd <= state.max_daily_loss_r:
         return False
-
     return True
+
+
+def evaluate_conditions(
+    bias: Bias,
+    price: float,
+    high_5m: float,
+    low_5m: float,
+    delta_5m: float,
+    buy_pressure: float,
+    obv_macd_bullish: bool,
+    obv_macd_bearish: bool,
+    obv_macd_value: str,
+    state: BotState,
+) -> tuple[list[tuple[str, bool, str]], list[tuple[str, bool, str]]]:
+    """Evaluate all entry conditions for both sides.
+
+    Returns:
+        (short_conditions, long_conditions) where each is a list of
+        (label, met, value_str) tuples.
+    """
+    daily_r = state.daily_pnl / state.risk_usd if state.risk_usd > 0 else 0.0
+
+    short_conds = [
+        ("Bias = SHORT", bias.direction == "SHORT", bias.direction),
+        ("OBV MACD Bearish", obv_macd_bearish, obv_macd_value),
+        ("Near 5m High", (price >= high_5m * 0.997 and price <= high_5m * 0.999) if high_5m > 0 else False,
+         f"{(1 - price / high_5m) * 100:.2f}%" if high_5m > 0 else "N/A"),
+        ("Delta 5m < 0", delta_5m < 0, f"${delta_5m:+,.0f}"),
+        ("Buy Press < 50%", buy_pressure < 50.0, f"{buy_pressure:.1f}%"),
+        ("No Open Position", state.position is None, "None" if state.position is None else state.position.side),
+        ("Bot Active", state.is_active, "Yes" if state.is_active else "No"),
+        ("Trades < Max", state.daily_trades < state.max_daily_trades, f"{state.daily_trades}/{state.max_daily_trades}"),
+        ("Daily P&L > -2R", daily_r > state.max_daily_loss_r, f"{daily_r:+.1f}R"),
+    ]
+
+    long_conds = [
+        ("Bias = LONG", bias.direction == "LONG", bias.direction),
+        ("OBV MACD Bullish", obv_macd_bullish, obv_macd_value),
+        ("Near 5m Low", (price >= low_5m * 1.003 and price <= low_5m * 1.005) if low_5m > 0 else False,
+         f"{(price / low_5m - 1) * 100:.2f}%" if low_5m > 0 else "N/A"),
+        ("Delta 5m > 0", delta_5m > 0, f"${delta_5m:+,.0f}"),
+        ("Buy Press > 50%", buy_pressure > 50.0, f"{buy_pressure:.1f}%"),
+        ("No Open Position", state.position is None, "None" if state.position is None else state.position.side),
+        ("Bot Active", state.is_active, "Yes" if state.is_active else "No"),
+        ("Trades < Max", state.daily_trades < state.max_daily_trades, f"{state.daily_trades}/{state.max_daily_trades}"),
+        ("Daily P&L > -2R", daily_r > state.max_daily_loss_r, f"{daily_r:+.1f}R"),
+    ]
+
+    return short_conds, long_conds
 
 
 def create_position(
@@ -216,12 +183,12 @@ def create_position(
 
     For SHORT:
         stop_loss = price * 1.0025 (+0.25%)
-        tp1 = price * 0.997 (-0.3%)
+        tp1 = price * 0.990 (-1.0%)
         tp2 = nearest long liquidation zone (below price)
 
     For LONG:
         stop_loss = price * 0.9975 (-0.25%)
-        tp1 = price * 1.003 (+0.3%)
+        tp1 = price * 1.010 (+1.0%)
         tp2 = nearest short liquidation zone (above price)
 
     Args:
@@ -236,11 +203,11 @@ def create_position(
     """
     if side == "SHORT":
         stop_loss = price * 1.0025  # +0.25%
-        tp1 = price * 0.997  # -0.3%
+        tp1 = price * 0.985  # -1.5%
         tp2 = nearest_liq_price  # Nearest long liq zone (below price)
     else:  # LONG
         stop_loss = price * 0.9975  # -0.25%
-        tp1 = price * 1.003  # +0.3%
+        tp1 = price * 1.015  # +1.5%
         tp2 = nearest_liq_price  # Nearest short liq zone (above price)
 
     return Position(
@@ -255,40 +222,53 @@ def create_position(
     )
 
 
+def maybe_trail_stop(position: Position, current_price: float) -> None:
+    """Move stop to breakeven once price moves 0.2% in our favor (before TP1).
+
+    This converts some full -1R stops into ~0R scratches.
+    """
+    if position.tp1_hit:
+        return  # Already at breakeven from TP1
+    if position.side == "SHORT":
+        if current_price <= position.entry_price * 0.998 and position.stop_loss > position.entry_price:
+            position.stop_loss = position.entry_price
+    else:  # LONG
+        if current_price >= position.entry_price * 1.002 and position.stop_loss < position.entry_price:
+            position.stop_loss = position.entry_price
+
+
 def check_exit(
     position: Position,
     current_price: float,
     delta_5m: float,
+    now_ms: int = 0,
+    min_hold_ms: int = 15 * 60 * 1000,
 ) -> str | None:
     """Check if position should be exited.
 
     Returns exit reason or None:
-    - "STOP": price hit stop loss
-    - "TP1": price hit TP1 (first time, partial exit)
-    - "TP2": price hit TP2 (after TP1 already hit)
-    - "EARLY_EXIT": delta_5m flipped against position
+    - "STOP": price hit stop loss (always checked)
+    - "TP1": price hit TP1 (always checked)
+    - "TP2": price hit TP2 (always checked)
+    - "EARLY_EXIT": delta_5m flipped (only after min_hold_ms cooldown)
     - None: hold position
-
-    For SHORT:
-        STOP if current_price >= stop_loss
-        TP1 if current_price <= tp1 and not tp1_hit
-        TP2 if current_price <= tp2 and tp1_hit
-        EARLY_EXIT if delta_5m > 0
-
-    For LONG:
-        STOP if current_price <= stop_loss
-        TP1 if current_price >= tp1 and not tp1_hit
-        TP2 if current_price >= tp2 and tp1_hit
-        EARLY_EXIT if delta_5m < 0
 
     Args:
         position: Current position
         current_price: Current BTC price
         delta_5m: 5-minute cumulative delta
+        now_ms: Current time in epoch ms (0 = use wall clock)
+        min_hold_ms: Minimum hold time before early exit allowed (default 15 min)
 
     Returns:
         Exit reason string or None to hold
     """
+    if now_ms == 0:
+        from time import time
+        now_ms = int(time() * 1000)
+
+    held_ms = now_ms - position.entry_time
+
     if position.side == "SHORT":
         # Check stop loss
         if current_price >= position.stop_loss:
@@ -302,8 +282,8 @@ def check_exit(
         if current_price <= position.tp2 and position.tp1_hit:
             return "TP2"
 
-        # Check early exit (delta flipped)
-        if delta_5m > 0:
+        # Check early exit (delta flipped) — only after hold cooldown
+        if held_ms >= min_hold_ms and delta_5m > 0:
             return "EARLY_EXIT"
 
     else:  # LONG
@@ -319,8 +299,8 @@ def check_exit(
         if current_price >= position.tp2 and position.tp1_hit:
             return "TP2"
 
-        # Check early exit (delta flipped)
-        if delta_5m < 0:
+        # Check early exit (delta flipped) — only after hold cooldown
+        if held_ms >= min_hold_ms and delta_5m < 0:
             return "EARLY_EXIT"
 
     # Hold position
