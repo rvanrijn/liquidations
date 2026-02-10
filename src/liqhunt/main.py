@@ -71,15 +71,13 @@ async def run_liqhunt():
                     liq_levels_short=liq_levels_short,
                 )
 
-                # Compute magnet price for sweep monitor display
+                # Compute magnet price for sweep monitor display (nearest liq on bigger side)
                 magnet_price = None
-                if monitor.snapshot:
-                    snap = monitor.snapshot
-                    magnet_price = (
-                        snap.nearest_long_price
-                        if snap.bigger_side == "LONG"
-                        else snap.nearest_short_price
-                    )
+                if monitor.snapshot and btc_data:
+                    if monitor.snapshot.bigger_side == "LONG" and liq_levels_long:
+                        magnet_price = max(liq_levels_long)
+                    elif liq_levels_short:
+                        magnet_price = min(liq_levels_short)
 
                 dashboard.update_signal_data(
                     signal=signal,

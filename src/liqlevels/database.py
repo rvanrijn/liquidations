@@ -21,19 +21,18 @@ class MagnetDatabase:
 
     def _create_tables(self) -> None:
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS battles (
+            CREATE TABLE IF NOT EXISTS battles_v2 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bigger_side TEXT NOT NULL,
-                hit_side TEXT NOT NULL,
+                moved_side TEXT NOT NULL,
                 hypothesis_correct INTEGER NOT NULL,
                 imbalance_ratio REAL NOT NULL,
                 duration_seconds REAL NOT NULL,
                 snapshot_price REAL NOT NULL,
-                nearest_long_price REAL NOT NULL,
-                nearest_short_price REAL NOT NULL,
+                resolved_price REAL NOT NULL,
+                move_pct REAL NOT NULL,
                 total_long_usd REAL NOT NULL,
                 total_short_usd REAL NOT NULL,
-                resolved_price REAL NOT NULL,
                 timestamp REAL NOT NULL
             )
         """)
@@ -41,24 +40,22 @@ class MagnetDatabase:
 
     def log_battle(self, battle: Battle) -> int:
         cursor = self.conn.execute("""
-            INSERT INTO battles (
-                bigger_side, hit_side, hypothesis_correct, imbalance_ratio,
-                duration_seconds, snapshot_price, nearest_long_price,
-                nearest_short_price, total_long_usd, total_short_usd,
-                resolved_price, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO battles_v2 (
+                bigger_side, moved_side, hypothesis_correct, imbalance_ratio,
+                duration_seconds, snapshot_price, resolved_price, move_pct,
+                total_long_usd, total_short_usd, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             battle.bigger_side,
-            battle.hit_side,
+            battle.moved_side,
             int(battle.hypothesis_correct),
             battle.imbalance_ratio,
             battle.duration_seconds,
             battle.snapshot_price,
-            battle.nearest_long_price,
-            battle.nearest_short_price,
+            battle.resolved_price,
+            battle.move_pct,
             battle.total_long_usd,
             battle.total_short_usd,
-            battle.resolved_price,
             battle.timestamp,
         ))
         self.conn.commit()
@@ -71,7 +68,7 @@ class MagnetDatabase:
                 COUNT(*) as total,
                 SUM(hypothesis_correct) as correct,
                 AVG(duration_seconds) as avg_duration
-            FROM battles
+            FROM battles_v2
         """).fetchone()
         total = row["total"] or 0
         correct = row["correct"] or 0
@@ -90,7 +87,7 @@ class MagnetDatabase:
                 COUNT(*) as total,
                 SUM(hypothesis_correct) as correct,
                 AVG(duration_seconds) as avg_duration
-            FROM battles
+            FROM battles_v2
             WHERE imbalance_ratio >= ?
         """, (min_ratio,)).fetchone()
         total = row["total"] or 0
@@ -106,7 +103,7 @@ class MagnetDatabase:
     def get_recent_battles(self, limit: int = 8) -> list[Battle]:
         """Get most recent battles."""
         cursor = self.conn.execute("""
-            SELECT * FROM battles
+            SELECT * FROM battles_v2
             ORDER BY timestamp DESC
             LIMIT ?
         """, (limit,))
@@ -116,16 +113,15 @@ class MagnetDatabase:
         return Battle(
             id=row["id"],
             bigger_side=row["bigger_side"],
-            hit_side=row["hit_side"],
+            moved_side=row["moved_side"],
             hypothesis_correct=bool(row["hypothesis_correct"]),
             imbalance_ratio=row["imbalance_ratio"],
             duration_seconds=row["duration_seconds"],
             snapshot_price=row["snapshot_price"],
-            nearest_long_price=row["nearest_long_price"],
-            nearest_short_price=row["nearest_short_price"],
+            resolved_price=row["resolved_price"],
+            move_pct=row["move_pct"],
             total_long_usd=row["total_long_usd"],
             total_short_usd=row["total_short_usd"],
-            resolved_price=row["resolved_price"],
             timestamp=row["timestamp"],
         )
 

@@ -4,15 +4,17 @@
 from dataclasses import dataclass
 
 
+# Battle resolves when price moves this % from snapshot in either direction
+RESOLVE_MOVE_PCT = 0.5
+
+
 @dataclass(frozen=True)
 class LiqSnapshot:
-    """Frozen snapshot of liquidation levels at a point in time."""
+    """Frozen snapshot of liquidation imbalance at a point in time."""
 
     btc_price: float
-    nearest_long_price: float  # Nearest long liq price (below current)
-    nearest_short_price: float  # Nearest short liq price (above current)
-    total_long_usd: float  # Total estimated USD in long liqs
-    total_short_usd: float  # Total estimated USD in short liqs
+    total_long_usd: float
+    total_short_usd: float
     timestamp: float  # time.time()
 
     @property
@@ -34,16 +36,15 @@ class LiqSnapshot:
 class Battle:
     """A resolved magnet battle."""
 
-    bigger_side: str  # "LONG" or "SHORT"
-    hit_side: str  # "LONG" or "SHORT" — which side price swept first
-    hypothesis_correct: bool  # Did price hit the bigger side?
+    bigger_side: str  # "LONG" or "SHORT" — side with more USD at risk
+    moved_side: str  # "LONG" or "SHORT" — which side price moved toward first
+    hypothesis_correct: bool  # Did price move toward the bigger side?
     imbalance_ratio: float
     duration_seconds: float
     snapshot_price: float
-    nearest_long_price: float
-    nearest_short_price: float
+    resolved_price: float
+    move_pct: float  # How far price moved from snapshot (signed)
     total_long_usd: float
     total_short_usd: float
-    resolved_price: float
     timestamp: float  # When battle was resolved
     id: int | None = None

@@ -51,11 +51,14 @@ class SignalEngine:
             return None
 
         magnet_side = snapshot.bigger_side
-        magnet_price = (
-            snapshot.nearest_long_price
-            if magnet_side == "LONG"
-            else snapshot.nearest_short_price
-        )
+        # Magnet price = nearest liq level on the bigger side (from live data)
+        if magnet_side == "LONG" and liq_levels_long:
+            magnet_price = max(liq_levels_long)  # closest long liq (highest below price)
+        elif magnet_side == "SHORT" and liq_levels_short:
+            magnet_price = min(liq_levels_short)  # closest short liq (lowest above price)
+        else:
+            self.rejection_reason = "No liq levels available"
+            return None
 
         # Track magnet flips
         if self._prev_magnet_side and self._prev_magnet_side != magnet_side:
@@ -186,12 +189,12 @@ class SignalEngine:
         if direction == "LONG":
             # Target: nearest short liq levels (above)
             above = sorted([p for p in liq_short if p > entry])
-            primary = above[0] if above else snapshot.nearest_short_price
-            secondary = above[1] if len(above) > 1 else snapshot.nearest_short_price
+            primary = above[0] if above else entry * 1.01
+            secondary = above[1] if len(above) > 1 else entry * 1.02
         else:
             # Target: nearest long liq levels (below)
             below = sorted([p for p in liq_long if p < entry], reverse=True)
-            primary = below[0] if below else snapshot.nearest_long_price
-            secondary = below[1] if len(below) > 1 else snapshot.nearest_long_price
+            primary = below[0] if below else entry * 0.99
+            secondary = below[1] if len(below) > 1 else entry * 0.98
 
         return primary, secondary

@@ -226,12 +226,17 @@ def build_magnet_status(
     current_price: float = 0.0,
 ) -> Panel:
     """Build current magnet battle status + all-time accuracy."""
+    from src.liqlevels.models import RESOLVE_MOVE_PCT
+
     content = Text()
 
     # Current battle
     if snapshot:
+        p = current_price or snapshot.btc_price
+        move_pct = (p - snapshot.btc_price) / snapshot.btc_price * 100
+
         content.append("ACTIVE BATTLE  ", style="bold yellow")
-        content.append(f"BTC {format_price(current_price or snapshot.btc_price)}", style="bold")
+        content.append(f"BTC {format_price(p)}", style="bold")
         content.append("  │  ", style="dim")
         content.append("Long $: ", style="red")
         content.append(format_usd(snapshot.total_long_usd), style="bold red")
@@ -251,16 +256,19 @@ def build_magnet_status(
         else:
             content.append(f"{elapsed:.0f}s", style="dim")
 
-        # Show distance to each target
-        p = current_price or snapshot.btc_price
-        long_dist = (p - snapshot.nearest_long_price) / p * 100
-        short_dist = (snapshot.nearest_short_price - p) / p * 100
+        # Show price movement from snapshot
         content.append("\n")
-        content.append(f" Long liq {format_price(snapshot.nearest_long_price)}", style="red")
-        content.append(f" ({long_dist:.2f}% away)", style="dim")
-        content.append("  │  ", style="dim")
-        content.append(f"Short liq {format_price(snapshot.nearest_short_price)}", style="green")
-        content.append(f" ({short_dist:.2f}% away)", style="dim")
+        if move_pct < 0:
+            arrow = "v"
+            move_style = "bold red"
+            toward = "LONG liq"
+        else:
+            arrow = "^"
+            move_style = "bold green"
+            toward = "SHORT liq"
+        content.append(f" {arrow} {move_pct:+.3f}% toward {toward}", style=move_style)
+        content.append(f"  │  Resolves at +/-{RESOLVE_MOVE_PCT}%", style="dim")
+        content.append(f"  │  From {format_price(snapshot.btc_price)}", style="dim")
     else:
         content.append("WAITING  ", style="dim")
         content.append("No active battle (insufficient imbalance)", style="dim")
@@ -302,16 +310,17 @@ def build_battle_log(recent_battles: list["Battle"]) -> Table:
     table.add_column("Time", width=8)
     table.add_column("Long $", justify="right", width=9)
     table.add_column("Short $", justify="right", width=9)
-    table.add_column("Bigger", justify="center", width=6)
-    table.add_column("Hit", justify="center", width=6)
+    table.add_column("Magnet", justify="center", width=6)
+    table.add_column("Moved", justify="center", width=6)
     table.add_column("OK?", justify="center", width=4)
+    table.add_column("Move%", justify="right", width=7)
     table.add_column("Ratio", justify="right", width=6)
     table.add_column("Dur", justify="right", width=7)
 
     for i, b in enumerate(recent_battles, 1):
         ts = datetime.fromtimestamp(b.timestamp).strftime("%H:%M:%S")
         bigger_style = "red" if b.bigger_side == "LONG" else "green"
-        hit_style = "red" if b.hit_side == "LONG" else "green"
+        moved_style = "red" if b.moved_side == "LONG" else "green"
         ok = Text("Y", style="bold green") if b.hypothesis_correct else Text("N", style="bold red")
         dur_min = b.duration_seconds / 60
         dur_str = f"{dur_min:.0f}m" if dur_min >= 1 else f"{b.duration_seconds:.0f}s"
@@ -322,8 +331,9 @@ def build_battle_log(recent_battles: list["Battle"]) -> Table:
             format_usd(b.total_long_usd),
             format_usd(b.total_short_usd),
             Text(b.bigger_side[:1], style=bigger_style),
-            Text(b.hit_side[:1], style=hit_style),
+            Text(b.moved_side[:1], style=moved_style),
             ok,
+            f"{b.move_pct:+.2f}%",
             f"{b.imbalance_ratio:.2f}",
             dur_str,
         )
