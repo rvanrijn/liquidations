@@ -14,12 +14,15 @@ logger = logging.getLogger(__name__)
 HIT_THRESHOLD_PCT = 0.05
 # Minimum imbalance to start tracking (skip near-equal sides)
 MIN_IMBALANCE_RATIO = 1.1
-# If nearest levels shift >0.2% from snapshot, silently reset
-LEVEL_SHIFT_PCT = 0.2
 
 
 class MagnetMonitor:
-    """Core engine: snapshot liq levels, track price, resolve battles."""
+    """Core engine: snapshot liq levels, track price, resolve battles.
+
+    Target prices are locked at snapshot time and don't move with
+    recalculated levels. A battle invalidates only when the imbalance
+    flips sides (bigger side changes from LONG to SHORT or vice versa).
+    """
 
     def __init__(self, db: MagnetDatabase):
         self.db = db
@@ -45,15 +48,16 @@ class MagnetMonitor:
                                total_long_usd, total_short_usd)
             return None
 
-        # Check if levels shifted too much → silent reset
-        if self._levels_shifted(nearest_long.price, nearest_short.price):
-            logger.debug("Liq levels shifted >%.1f%%, resetting snapshot", LEVEL_SHIFT_PCT)
+        # Invalidate if imbalance flipped sides
+        current_bigger = "LONG" if total_long_usd >= total_short_usd else "SHORT"
+        if current_bigger != self.snapshot.bigger_side:
+            logger.debug("Imbalance flipped from %s to %s, resetting", self.snapshot.bigger_side, current_bigger)
             self.snapshot = None
             self._try_snapshot(price, nearest_long.price, nearest_short.price,
                                total_long_usd, total_short_usd)
             return None
 
-        # Check if price hit either side
+        # Check if price hit either side (using locked snapshot targets)
         battle = self._check_hit(price)
         if battle:
             self.db.log_battle(battle)
@@ -79,13 +83,6 @@ class MagnetMonitor:
                 total_short_usd=short_usd,
                 timestamp=time(),
             )
-
-    def _levels_shifted(self, long_price: float, short_price: float) -> bool:
-        """Check if nearest levels moved too far from snapshot."""
-        snap = self.snapshot
-        long_shift = abs(long_price - snap.nearest_long_price) / snap.nearest_long_price * 100
-        short_shift = abs(short_price - snap.nearest_short_price) / snap.nearest_short_price * 100
-        return long_shift > LEVEL_SHIFT_PCT or short_shift > LEVEL_SHIFT_PCT
 
     def _check_hit(self, price: float) -> Battle | None:
         """Check if price reached within HIT_THRESHOLD_PCT of either side's nearest level."""
