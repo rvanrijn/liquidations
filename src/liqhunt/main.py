@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import subprocess
 
 from src.liqhunt.candles import CandleFetcher
 from src.liqhunt.dashboard import LiqHuntDashboard
@@ -27,6 +28,7 @@ async def run_liqhunt():
     monitor = MagnetMonitor(magnet_db)
     candle_fetcher = CandleFetcher()
     signal_engine = SignalEngine()
+    last_announced_ts: float = 0
 
     try:
         with dashboard.create_live() as live:
@@ -78,6 +80,12 @@ async def run_liqhunt():
                         magnet_price = max(liq_levels_long)
                     elif liq_levels_short:
                         magnet_price = min(liq_levels_short)
+
+                # Announce new signal via TTS
+                if signal and signal.timestamp != last_announced_ts:
+                    last_announced_ts = signal.timestamp
+                    msg = f"Signal is active based on tracked liquidations. {signal.direction} at {int(signal.entry_price)}"
+                    subprocess.Popen(["say", msg])
 
                 dashboard.update_signal_data(
                     signal=signal,
