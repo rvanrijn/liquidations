@@ -104,7 +104,7 @@ def build_timeframe_table(aggregators: dict[str, "OrderFlowAggregator"]) -> Tabl
     table.add_column("Delta", justify="right", width=12)
     table.add_column("Bias", justify="center", width=10)
 
-    for tf in ["5m", "15m", "1h", "4h"]:
+    for tf in ["1m", "5m", "15m", "1h", "4h"]:
         agg = aggregators.get(tf)
         if not agg:
             continue

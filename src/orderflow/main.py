@@ -21,6 +21,7 @@ logging.basicConfig(
 async def run_orderflow():
     """Main async entry point."""
     aggregators = {
+        "1m": OrderFlowAggregator(window_minutes=1),
         "5m": OrderFlowAggregator(window_minutes=5),
         "15m": OrderFlowAggregator(window_minutes=15),
         "1h": OrderFlowAggregator(window_minutes=60),
