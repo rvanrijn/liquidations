@@ -10,6 +10,7 @@ from rich.columns import Columns
 from rich.align import Align
 
 from datetime import datetime
+from time import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -240,6 +241,14 @@ def build_magnet_status(
         magnet = snapshot.bigger_side
         style = "bold red" if magnet == "LONG" else "bold green"
         content.append(f"{magnet} ({snapshot.imbalance_ratio:.1f}x)", style=style)
+        content.append("  │  ", style="dim")
+        elapsed = time() - snapshot.timestamp
+        if elapsed >= 3600:
+            content.append(f"{elapsed / 3600:.1f}h", style="dim")
+        elif elapsed >= 60:
+            content.append(f"{elapsed / 60:.0f}m", style="dim")
+        else:
+            content.append(f"{elapsed:.0f}s", style="dim")
     else:
         content.append("WAITING  ", style="dim")
         content.append("No active battle (insufficient imbalance)", style="dim")
