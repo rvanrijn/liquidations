@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liquidation Magnet Hypothesis</title>
+<style>
+  :root { --bg: #0a0e17; --card: #111827; --border: #1e293b; --text: #e2e8f0; --dim: #64748b; --green: #22c55e; --red: #ef4444; --yellow: #eab308; --cyan: #06b6d4; --purple: #a855f7; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 14px; line-height: 1.6; padding: 2rem; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; color: var(--cyan); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1.1rem; color: var(--purple); margin: 1.5rem 0 0.5rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.2rem; margin: 0.75rem 0; }
+  .hypothesis { border-left: 3px solid var(--yellow); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  .stat { text-align: center; padding: 0.75rem; }
+  .stat .value { font-size: 1.4rem; font-weight: bold; }
+  .stat .label { font-size: 0.75rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .yellow { color: var(--yellow); }
+  .cyan { color: var(--cyan); }
+  .dim { color: var(--dim); }
+  .flow { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+  .flow .step { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+  .flow .arrow { color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: var(--dim); font-weight: normal; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+  td { padding: 0.3rem 0.5rem; }
+  code { background: var(--bg); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.85rem; }
+  .tag { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; border: 1px solid var(--border); color: var(--dim); }
+</style>
+</head>
+<body>
+
+<h1>Liquidation Magnet Hypothesis</h1>
+
+<div class="card hypothesis">
+  <strong class="yellow">Core Hypothesis</strong><br>
+  In crypto perpetual futures, the side with greater estimated liquidation USD acts as a price magnet.
+  Price is more likely to move toward the larger liquidation cluster first, triggering cascading
+  liquidations before reversing.
+  <br><br>
+  <span class="dim">If Long liquidations ($3.6B) > Short liquidations ($1.9B) &rarr; price drops to sweep longs first.</span>
+</div>
+
+<h2>How It Works</h2>
+
+<div class="card">
+  <div class="flow">
+    <span class="step">Snapshot imbalance</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">Track price direction</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">Resolve at &plusmn;0.5%</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step">Log &amp; repeat</span>
+  </div>
+  <br>
+  <table>
+    <tr><th>Step</th><th>Detail</th></tr>
+    <tr><td><strong>1. Snapshot</strong></td><td>When long/short liq USD imbalance exceeds 1.1x, record BTC price + both sides' totals</td></tr>
+    <tr><td><strong>2. Track</strong></td><td>Poll every 10s. If imbalance flips sides, silently reset (no battle logged)</td></tr>
+    <tr><td><strong>3. Resolve</strong></td><td>When price moves &plusmn;0.5% from snapshot: record which direction moved first</td></tr>
+    <tr><td><strong>4. Score</strong></td><td>If price moved toward the bigger side &rarr; hypothesis correct. Persist to SQLite</td></tr>
+  </table>
+</div>
+
+<h2>Signal Engine</h2>
+
+<div class="card">
+  <span class="dim">Post-sweep reversal signals built on top of the magnet monitor:</span>
+  <br><br>
+  <table>
+    <tr><th>Gate</th><th>Condition</th></tr>
+    <tr><td class="cyan">Bias</td><td>Magnet imbalance &ge; 1.5x</td></tr>
+    <tr><td class="cyan">Sweep</td><td>5m candle enters liq zone (&plusmn;0.4% of magnet price), needs 3/5 criteria: range &gt; 1.2x avg, wick &ge; 40%, close reclaims, level breach, no continuation</td></tr>
+    <tr><td class="cyan">Reclaim</td><td>Post-sweep candle closes back beyond magnet price and holds</td></tr>
+    <tr><td class="cyan">Orderflow</td><td>1-minute BTC delta aligns with signal direction (positive for LONG, negative for SHORT)</td></tr>
+    <tr><td class="cyan">Risk</td><td>Stop distance &le; 0.6% from entry</td></tr>
+  </table>
+  <br>
+  <span class="dim">Signal fires only when all gates pass. Targets: nearest liq levels on the opposite side.</span>
+</div>
+
+<h2>Architecture</h2>
+
+<div class="card">
+  <div class="grid">
+    <div>
+      <strong class="purple">Data Sources</strong><br>
+      <table>
+        <tr><td><code>Binance Futures REST</code></td><td class="dim">Liq levels, OI, klines</td></tr>
+        <tr><td><code>Binance WebSocket</code></td><td class="dim">Real-time aggTrade stream</td></tr>
+      </table>
+    </div>
+    <div>
+      <strong class="purple">Modules</strong><br>
+      <table>
+        <tr><td><code>src/liqlevels/</code></td><td class="dim">Liq data + magnet monitor</td></tr>
+        <tr><td><code>src/liqhunt/</code></td><td class="dim">Signal engine + dashboard</td></tr>
+        <tr><td><code>src/orderflow/</code></td><td class="dim">Trade aggregation</td></tr>
+      </table>
+    </div>
+  </div>
+  <br>
+  <div class="grid">
+    <div>
+      <strong class="purple">Storage</strong><br>
+      <span class="dim">SQLite &mdash;</span> <code>data/magnet_battles.db</code><br>
+      <span class="dim">Persists across restarts. Schema: battles_v2</span>
+    </div>
+    <div>
+      <strong class="purple">Interface</strong><br>
+      <span class="dim">Rich TUI &mdash; terminal dashboard</span><br>
+      <span class="dim">macOS TTS alerts on signal fire</span>
+    </div>
+  </div>
+</div>
+
+<h2>Early Results</h2>
+
+<div class="card">
+  <div class="grid">
+    <div class="stat"><div class="value yellow">62.5%</div><div class="label">Accuracy (all battles)</div></div>
+    <div class="stat"><div class="value">8</div><div class="label">Battles recorded</div></div>
+    <div class="stat"><div class="value cyan">1.9x</div><div class="label">Avg imbalance ratio</div></div>
+    <div class="stat"><div class="value dim">~1h</div><div class="label">Avg battle duration</div></div>
+  </div>
+  <br>
+  <span class="dim">
+    Baseline expectation: 50% (coin flip). Target: &gt;55% sustained at &ge;1.5x imbalance over 200+ battles.
+    Early data is promising but statistically insufficient &mdash; need weeks of continuous data collection.
+  </span>
+</div>
+
+<h2>Tech Stack</h2>
+
+<div class="card">
+  <span class="tag">Python 3.12</span>
+  <span class="tag">asyncio</span>
+  <span class="tag">aiohttp</span>
+  <span class="tag">Rich TUI</span>
+  <span class="tag">SQLite</span>
+  <span class="tag">WebSocket</span>
+  <span class="tag">Binance Futures API</span>
+  <span class="tag">uv</span>
+</div>
+
+<br>
+<div class="dim" style="text-align: center; font-size: 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--border);">
+  Liquidation Magnet Monitor &mdash; BTC perpetual futures research tool &mdash; Feb 2026
+</div>
+
+</body>
+</html>
