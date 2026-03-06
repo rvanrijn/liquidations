@@ -8,6 +8,12 @@ dependencies = [
     "rich>=13.0",
     "python-dotenv>=1.0",
     "aiohttp>=3.9",
+    "python-kraken-sdk>=2.0.0",
+    "pybit>=5.6.0",
+    "python-okx>=0.4.0",
+    "hyperliquid-python-sdk>=0.22.0",
+    "eth-account>=0.11.0",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +29,11 @@ liqlevels = "src.liqlevels.main:main"
 scalper = "src.scalper.main:main"
 scalper-backtest = "src.scalper.backtest:main"
 liqhunt = "src.liqhunt.main:main"
+liqbot = "src.krakenbot.main:main"
+krakenbot-backtest = "src.krakenbot.backtest:main"
+bybitbot = "src.bybitbot.main:main"
+hlbot = "src.hlbot.main:main"
+deribitbot = "src.deribitbot.main:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
