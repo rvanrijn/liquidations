@@ -11,6 +11,7 @@ from time import time as _time
 
 import aiohttp
 
+from src.krakenbot.candles import CandleFetcher
 from src.krakenbot.config import BotConfig
 from src.krakenbot.dashboard import KrakenBotDashboard
 from src.krakenbot.database import KrakenBotDatabase
@@ -23,10 +24,13 @@ from src.krakenbot.risk_manager import RiskManager
 
 MIN_HOLD_SEC = 4 * 60  # 4 min — don't allow early exits before this
 MAX_HOLD_SEC = 60 * 60  # 60 min — close trade if still open after this
-OI_EMERGENCY_PCT = 0.5  # emergency exit: bypass hold time if OI spikes > +0.5% from entry
-OI_EMERGENCY_MIN_SEC = 180  # minimum 3 min before emergency exit can fire
-OI_GATE_PCT = -0.1      # OI must drop at least this much (backtest optimal)
+OI_EMERGENCY_PCT = 0.3  # emergency exit: bypass hold time if OI spikes > +0.3% from entry
+OI_EMERGENCY_MIN_SEC = 30  # 30s grace period to avoid single-tick noise
+OI_GATE_PCT = -0.35     # OI must drop at least this much (shallow -0.30 to -0.35 = 50% WR coin flip)
 MIN_IMBALANCE = 1.25    # minimum imbalance ratio
+SKIP_HOURS = {7, 8, 15, 18}  # session opens: 29-41% WR in 748-battle dataset
+OI_DEEP_THRESHOLD = -0.45  # OI this deep = bounce risk, set breakeven stop
+COOLDOWN_SEC = 20 * 60  # 20 min cooldown between trades (re-entry <20m = 41% WR, >20m = 71% WR)
 
 COINS = ["BTC", "ETH", "SOL"]
 
@@ -98,10 +102,11 @@ async def run_bot():
 
     # Restore persisted position
     position: LivePosition | None = db.load_live_position()
-    balance = db.get_live_balance() or 118.0  # Kraken futures starting balance (USDC)
+    balance = db.get_live_balance() or 5000.0  # paper trading starting balance
     trade_stats = db.get_live_stats()
     recent_trades = db.get_recent_live_trades()
     pending_limit: dict | None = None  # tracks pending limit order
+    last_trade_time: float = recent_trades[-1].exit_time if recent_trades else 0.0
 
     if position:
         logging.warning(
@@ -196,10 +201,17 @@ async def run_bot():
     except Exception:
         pass  # non-critical, will warm up naturally
 
+    candle_fetcher = CandleFetcher()
+
     try:
 
         with dashboard.create_live() as live:
             while True:
+                # 0. Fetch 5m candles (for HA filter)
+                await client._ensure_session()
+                await candle_fetcher.fetch(client.session)
+                await candle_fetcher.fetch_ha_3m(client.session)
+
                 # 1. Fetch liq data
                 data = await client.get_all_coins(COINS)
                 dashboard.update_data(data)
@@ -227,7 +239,8 @@ async def run_bot():
                 prev_snap_ts = monitor.snapshot.timestamp if monitor.snapshot else 0
                 battle = None
                 if btc_data:
-                    battle = monitor.update(btc_data)
+                    _ha_c_battle, _ha_br_battle, _ha_st_battle = candle_fetcher.ha_signal
+                    battle = monitor.update(btc_data, ha_color=_ha_c_battle, ha_body_ratio=_ha_br_battle, ha_streak=_ha_st_battle)
 
                 # Cancel pending limit if battle resolved (snapshot gone or changed)
                 if pending_limit and battle:
@@ -248,6 +261,22 @@ async def run_bot():
                     if _unrealized < position.mae_pct:
                         position.mae_pct = _unrealized
                         db.save_live_position(position)
+
+                    # Breakeven stop: if OI was deep at entry, close if price returns to entry
+                    if (not closed_trade and position.oi_pct_at_entry <= OI_DEEP_THRESHOLD
+                        and ((position.direction == "SHORT" and btc_price >= position.entry_price)
+                             or (position.direction == "LONG" and btc_price <= position.entry_price))):
+                        logging.warning(
+                            "BREAKEVEN STOP: OI was %.2f%% at entry (deep) — price returned to entry %.0f | closing %s",
+                            position.oi_pct_at_entry, position.entry_price, position.direction,
+                        )
+                        try:
+                            closed_trade = await _close_position(
+                                executor, db, position, position.entry_price,
+                                balance, price_range_6h, "breakeven_stop",
+                            )
+                        except Exception as e:
+                            logging.error("Breakeven stop close failed: %s", e)
 
                 # OI flip early exit — check BEFORE battle resolution
                 _held = (_time() - position.entry_time) if position else 0
@@ -306,6 +335,7 @@ async def run_bot():
                     balance = closed_trade.balance_after
                     risk_mgr.record_trade(closed_trade.pnl_usd)
                     position = None
+                    last_trade_time = _time()
                     trade_stats = db.get_live_stats()
                     recent_trades = db.get_recent_live_trades()
 
@@ -383,6 +413,31 @@ async def run_bot():
                             filled, fill_price, fill_size = await executor.check_order_filled(
                                 pending_limit["order_id"])
                         if filled:
+                            # Re-check HA at fill time — momentum may have shifted
+                            _ha_c, _ha_br, _ha_st = candle_fetcher.ha_signal
+                            _ha_ok = ((pending_limit["direction"] == "SHORT" and _ha_c == "RED") or
+                                      (pending_limit["direction"] == "LONG" and _ha_c == "GREEN"))
+                            _ha_ok = _ha_ok and _ha_st >= 2 and _ha_br >= 0.3
+                            if not _ha_ok:
+                                _rej_logger.info(
+                                    "LIMIT FILLED but HA flipped — closing immediately | HA=%s br=%.2f st=%d",
+                                    _ha_c, _ha_br, _ha_st,
+                                )
+                                # Close the filled position right away
+                                try:
+                                    _close_result = await executor.close_position(
+                                        pending_limit["direction"],
+                                        fill_size or pending_limit["size"],
+                                        btc_price, "ha_cancel",
+                                    )
+                                    if _close_result.success:
+                                        logging.warning("HA CANCEL: closed %s @ %.0f immediately after fill",
+                                                        pending_limit["direction"], btc_price)
+                                except Exception as e:
+                                    logging.error("HA cancel close failed: %s", e)
+                                pending_limit = None
+                                continue
+
                             oi_usd_now = btc_data.open_interest_usd if btc_data else 0.0
                             position = LivePosition(
                                 direction=pending_limit["direction"],
@@ -395,6 +450,7 @@ async def run_bot():
                                 kraken_order_id=pending_limit["order_id"],
                                 cli_ord_id=pending_limit["cli_ord_id"],
                                 oi_usd_at_entry=oi_usd_now,
+                                oi_pct_at_entry=oi_change_pct,
                             )
                             db.save_live_position(position)
                             _rej_logger.info(
@@ -405,8 +461,22 @@ async def run_bot():
                             )
                             pending_limit = None
 
-                    # Place new limit order when OI gate opens
+                    # HA 3m filter: color alignment + body strength + streak
+                    HA_MIN_BODY_RATIO = 0.3
+                    HA_MIN_STREAK = 2
+                    ha_color, ha_body_ratio, ha_streak = candle_fetcher.ha_signal
+                    ha_aligned = (direction == "SHORT" and ha_color == "RED") or \
+                                 (direction == "LONG" and ha_color == "GREEN")
+                    ha_quality = ha_aligned and ha_streak >= HA_MIN_STREAK and ha_body_ratio >= HA_MIN_BODY_RATIO
+
+                    # Place new limit order when OI gate opens + HA quality + cooldown
+                    from datetime import datetime as _dt, timezone as _tz
+                    in_cooldown = last_trade_time > 0 and (_time() - last_trade_time) < COOLDOWN_SEC
+                    in_skip_hour = _dt.now(_tz.utc).hour in SKIP_HOURS
                     if (position is None and pending_limit is None
+                        and not in_cooldown
+                        and not in_skip_hour
+                        and ha_quality
                         and oi_change_pct <= OI_GATE_PCT
                         and monitor.snapshot.imbalance_ratio >= MIN_IMBALANCE):
 
@@ -447,6 +517,7 @@ async def run_bot():
                                             kraken_order_id=result.order_id,
                                             cli_ord_id=result.cli_ord_id,
                                             oi_usd_at_entry=oi_usd_now,
+                                            oi_pct_at_entry=oi_change_pct,
                                         )
                                         db.save_live_position(position)
                                         _rej_logger.info(
@@ -541,6 +612,7 @@ async def run_bot():
                                         balance = closed_trade.balance_after
                                         risk_mgr.record_trade(closed_trade.pnl_usd)
                                         position = None
+                                        last_trade_time = _time()
                                         trade_stats = db.get_live_stats()
                                         recent_trades = db.get_recent_live_trades()
                                         break

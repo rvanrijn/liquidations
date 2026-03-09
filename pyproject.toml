@@ -14,6 +14,10 @@ dependencies = [
     "hyperliquid-python-sdk>=0.22.0",
     "eth-account>=0.11.0",
     "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "asyncssh>=2.17",
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -31,9 +35,11 @@ scalper-backtest = "src.scalper.backtest:main"
 liqhunt = "src.liqhunt.main:main"
 liqbot = "src.krakenbot.main:main"
 krakenbot-backtest = "src.krakenbot.backtest:main"
+battle-backtest = "src.krakenbot.backtest_battle:main"
 bybitbot = "src.bybitbot.main:main"
 hlbot = "src.hlbot.main:main"
 deribitbot = "src.deribitbot.main:main"
+visualizer = "src.visualizer.app:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
