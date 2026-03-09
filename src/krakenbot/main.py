@@ -26,7 +26,7 @@ MIN_HOLD_SEC = 4 * 60  # 4 min — don't allow early exits before this
 MAX_HOLD_SEC = 60 * 60  # 60 min — close trade if still open after this
 OI_EMERGENCY_PCT = 0.3  # emergency exit: bypass hold time if OI spikes > +0.3% from entry
 OI_EMERGENCY_MIN_SEC = 30  # 30s grace period to avoid single-tick noise
-OI_GATE_PCT = -0.35     # OI must drop at least this much (shallow -0.30 to -0.35 = 50% WR coin flip)
+OI_GATE_PCT = -0.10     # loosened from -0.35 (CVD gate compensates: OI -0.10 + CVD aligned = 94% WR)
 MIN_IMBALANCE = 1.25    # minimum imbalance ratio
 SKIP_HOURS = {7, 8, 15, 18}  # session opens: 29-41% WR in 748-battle dataset
 OI_DEEP_THRESHOLD = -0.45  # OI this deep = bounce risk, set breakeven stop
@@ -469,7 +469,13 @@ async def run_bot():
                                  (direction == "LONG" and ha_color == "GREEN")
                     ha_quality = ha_aligned and ha_streak >= HA_MIN_STREAK and ha_body_ratio >= HA_MIN_BODY_RATIO
 
-                    # Place new limit order when OI gate opens + HA quality + cooldown
+                    # CVD contrarian gate: buy pressure for SHORT (longs liquidating), sell pressure for LONG
+                    cvd_aligned = taker is not None and (
+                        (direction == "SHORT" and taker < 1.0)
+                        or (direction == "LONG" and taker > 1.0)
+                    )
+
+                    # Place new limit order when OI gate + HA + cooldown + CVD
                     from datetime import datetime as _dt, timezone as _tz
                     in_cooldown = last_trade_time > 0 and (_time() - last_trade_time) < COOLDOWN_SEC
                     in_skip_hour = _dt.now(_tz.utc).hour in SKIP_HOURS
@@ -477,6 +483,7 @@ async def run_bot():
                         and not in_cooldown
                         and not in_skip_hour
                         and ha_quality
+                        and cvd_aligned
                         and oi_change_pct <= OI_GATE_PCT
                         and monitor.snapshot.imbalance_ratio >= MIN_IMBALANCE):
 
