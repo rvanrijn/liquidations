@@ -76,3 +76,7 @@ class Signal:
     imbalance_ratio: float
     sweep: SweepResult
     timestamp: float = field(default_factory=time)
+    confidence: int = 0
+    quality_score: float = 0.0
+    gate_probability: float = 0.0
+    notional_scale: float = 1.0
