@@ -83,3 +83,57 @@ def test_quality_score_funding_alignment():
         magnet_side="LONG",
     )
     assert q_aligned > q_opposed
+
+
+from src.liqhunt.quality import sigmoid_gate, compute_notional_scale, P_MIN, SIGMOID_Q0
+
+
+def test_sigmoid_gate_at_q0_returns_half():
+    """Sigmoid at q0 should return exactly 0.5."""
+    p = sigmoid_gate(SIGMOID_Q0)
+    assert abs(p - 0.5) < 1e-6
+
+
+def test_sigmoid_gate_high_quality():
+    """High quality score -> probability near 1.0."""
+    p = sigmoid_gate(1.0)
+    assert p > 0.95
+
+
+def test_sigmoid_gate_low_quality():
+    """Low quality score -> probability near 0.0."""
+    p = sigmoid_gate(0.0)
+    assert p < 0.10
+
+
+def test_sigmoid_gate_monotonic():
+    """Higher quality -> higher probability."""
+    p1 = sigmoid_gate(0.2)
+    p2 = sigmoid_gate(0.5)
+    p3 = sigmoid_gate(0.8)
+    assert p1 < p2 < p3
+
+
+def test_notional_scale_below_pmin():
+    """Below p_min -> no trade (scale 0)."""
+    scale = compute_notional_scale(P_MIN - 0.01)
+    assert scale == 0.0
+
+
+def test_notional_scale_at_pmin():
+    """At p_min -> minimum scale (0.5x)."""
+    scale = compute_notional_scale(P_MIN)
+    assert abs(scale - 0.5) < 0.01
+
+
+def test_notional_scale_at_one():
+    """At probability 1.0 -> maximum scale (2.0x)."""
+    scale = compute_notional_scale(1.0)
+    assert abs(scale - 2.0) < 0.01
+
+
+def test_notional_scale_midpoint():
+    """Midpoint probability -> ~1.25x."""
+    mid_p = (P_MIN + 1.0) / 2
+    scale = compute_notional_scale(mid_p)
+    assert abs(scale - 1.25) < 0.1
