@@ -241,3 +241,33 @@ def test_legacy_gates_block_when_sigmoid_disabled():
         )
         assert signal is None
         assert "OI regime" in engine.rejection_reason or "shadow" in engine.rejection_reason
+
+
+from unittest.mock import MagicMock
+from src.liqhunt.paper_trader import PaperTrader, LEVERAGE, STARTING_BALANCE
+
+
+def test_paper_trader_uses_notional_scale():
+    """Paper trader should scale notional by signal.notional_scale."""
+    mock_db = MagicMock()
+    mock_db.get_paper_balance.return_value = STARTING_BALANCE
+    mock_db.load_open_position.return_value = None
+    mock_db.get_recent_paper_trades.return_value = []
+    mock_db.get_paper_stats.return_value = {}
+
+    trader = PaperTrader(mock_db)
+
+    candle = Candle(open=100, high=105, low=95, close=102, volume=1000, timestamp=0)
+    sweep = SweepResult(valid=True, candle=candle, extreme=95.0, direction="DOWN", criteria_met=["range"])
+    sig = Signal(
+        direction="SHORT", entry_price=100_000, stop_price=101_000,
+        risk_pct=0.01, primary_target=99_000, secondary_target=98_000,
+        reasoning="test", magnet_side="LONG", imbalance_ratio=2.0, sweep=sweep,
+        notional_scale=1.5,
+    )
+
+    trader.on_signal(sig, snapshot_price=100_000)
+
+    assert trader.position is not None
+    expected_notional = STARTING_BALANCE * LEVERAGE * 1.5  # $37,500
+    assert abs(trader.position.notional - expected_notional) < 0.01
