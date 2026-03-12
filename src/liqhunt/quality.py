@@ -14,21 +14,21 @@ USE_SIGMOID_GATE = True
 
 # ── Calibrated weights (updated by scripts/calibrate_sigmoid.py) ──
 # Data-backed features (calibrated via sweep)
-W_OI = 0.35
-W_IMB = 0.30
-W_FUND = 0.10
+W_OI = 0.2
+W_IMB = 0.2
+W_FUND = 0.0
 
 # Live-only features (fixed at 0.1, not in battle data)
 W_VOL = 0.10
 W_VEL = 0.10
 W_TAKER = 0.10
 
-WEIGHT_SUM = W_OI + W_IMB + W_FUND + W_VOL + W_VEL + W_TAKER
+WEIGHT_SUM = W_OI + W_IMB + W_FUND + W_VOL + W_VEL + W_TAKER  # 0.70
 
 # ── Sigmoid parameters (updated by scripts/calibrate_sigmoid.py) ──
-SIGMOID_K = 6.0
-SIGMOID_Q0 = 0.40
-P_MIN = 0.50
+SIGMOID_K = 10.0
+SIGMOID_Q0 = 0.2
+P_MIN = 0.3
 
 # ── Position sizing ──────────────────────────────────────────
 BASE_NOTIONAL = 25_000.0  # current fixed $25K becomes midpoint
