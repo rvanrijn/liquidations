@@ -179,6 +179,19 @@ class KrakenBotDatabase:
         self.conn.commit()
         return cursor.lastrowid
 
+    def get_consecutive_losses(self) -> int:
+        """Count consecutive losing trades from most recent backwards."""
+        cursor = self.conn.execute(
+            "SELECT pnl_usd FROM live_trades ORDER BY id DESC LIMIT 10"
+        )
+        count = 0
+        for row in cursor:
+            if row["pnl_usd"] < 0:
+                count += 1
+            else:
+                break
+        return count
+
     def get_live_balance(self) -> float | None:
         row = self.conn.execute(
             "SELECT balance_after FROM live_trades ORDER BY id DESC LIMIT 1"

@@ -89,11 +89,14 @@ async def health():
     pos_label = "FLAT"
     if pos:
         pos_label = f"{pos.direction} {pos.size_contracts} BTC @ {pos.entry_price:.0f}"
+    losses = db.get_consecutive_losses()
     return {
         "status": "ok",
         "mode": config.mode_label,
         "position": pos_label,
         "last_webhook": _last_webhook_time,
+        "consecutive_losses": losses,
+        "leverage": 1 if losses >= 3 else config.leverage,
     }
 
 
@@ -166,6 +169,7 @@ async def webhook(request: Request):
 
         # --- Open new position if not going flat ---
         new_pos = None
+        consecutive_losses = 0
         if desired != "FLAT":
             balance = await executor.get_balance()
             if balance is None or balance <= 0:
@@ -175,7 +179,13 @@ async def webhook(request: Request):
                     content={"ok": False, "error": "could not fetch balance"},
                 )
 
-            size = executor.calculate_position_size(balance, price)
+            # Circuit breaker: drop to 1x after 3 consecutive losses
+            consecutive_losses = db.get_consecutive_losses()
+            effective_leverage = 1 if consecutive_losses >= 3 else config.leverage
+            size = balance * effective_leverage * 0.95 / price
+            size = int(size * 10000) / 10000  # round down to 0.0001
+            if consecutive_losses >= 3:
+                logger.info("CIRCUIT BREAKER: %d consecutive losses → 1x leverage", consecutive_losses)
             if size <= 0:
                 return JSONResponse(
                     status_code=500,
@@ -196,7 +206,7 @@ async def webhook(request: Request):
                 entry_price=result.filled_price or price,
                 entry_time=_time(),
                 size_contracts=result.filled_size or size,
-                notional_usd=balance * config.leverage,
+                notional_usd=balance * effective_leverage,
                 kraken_order_id=result.order_id,
                 cli_ord_id=result.cli_ord_id,
             )
@@ -224,6 +234,8 @@ async def webhook(request: Request):
         if desired != "FLAT" and new_pos:
             parts.append(f"Opened {desired} @ {price:,.0f}")
             parts.append(f"Size: {new_pos.size_contracts} BTC | Notional: ${new_pos.notional_usd:,.0f}")
+            if consecutive_losses >= 3:
+                parts.append(f"⚠️ Circuit breaker: 1x leverage ({consecutive_losses} losses)")
         if closed_trade:
             bal = closed_trade.balance_after
         else:
