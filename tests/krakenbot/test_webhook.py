@@ -8,10 +8,16 @@ os.environ["BOT_DB_PATH"] = "/tmp/test_webhook.db"
 os.environ["WEBHOOK_SECRET"] = "test-secret"
 os.environ["BOT_LEVERAGE"] = "3"
 
+from datetime import datetime, timezone
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from src.krakenbot.main import app
+
+# Always pretend it's a Wednesday (weekday=2) so Saturday filter doesn't block tests
+_FAKE_NOW = datetime(2026, 3, 25, 12, 0, 0, tzinfo=timezone.utc)  # Wednesday
 
 
 @pytest.fixture(autouse=True)
@@ -29,8 +35,11 @@ def clean_db():
 @pytest.fixture
 def client(clean_db):
     """Create a fresh TestClient per test (triggers lifespan with clean DB)."""
-    with TestClient(app) as c:
-        yield c
+    with patch("src.krakenbot.main.datetime") as mock_dt:
+        mock_dt.now.return_value = _FAKE_NOW
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with TestClient(app) as c:
+            yield c
 
 
 def _webhook(client, position: float, price: float = 87000.0, secret: str = "test-secret"):

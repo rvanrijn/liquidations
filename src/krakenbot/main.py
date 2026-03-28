@@ -6,6 +6,7 @@ import asyncio
 import logging
 import logging.handlers
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from time import time as _time
 
@@ -103,6 +104,11 @@ async def webhook(request: Request):
     if config.webhook_secret and body.get("secret") != config.webhook_secret:
         logger.warning("Rejected webhook: invalid secret")
         return JSONResponse(status_code=401, content={"ok": False, "error": "invalid secret"})
+
+    # --- Skip Saturdays ---
+    if datetime.now(timezone.utc).weekday() == 5:
+        logger.info("Ignored webhook: Saturday")
+        return {"ok": True, "action": "no_change", "detail": "Saturday — signals ignored"}
 
     # --- Parse desired state from position field ---
     tv_position = body.get("position", 0)
