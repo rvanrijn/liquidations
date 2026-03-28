@@ -66,7 +66,11 @@ async def lifespan(app: FastAPI):
     # Start 4h status loop
     status_task = asyncio.create_task(_status_loop())
 
-    await _notify_trade(f"🟢 KrakenBot started [{config.mode_label}]")
+    if not config.webhook_secret:
+        logger.warning("WEBHOOK_SECRET is empty — all requests will be accepted without auth!")
+        await _notify_trade("⚠️ WEBHOOK_SECRET not set — bot running without auth!")
+    else:
+        await _notify_trade(f"🟢 KrakenBot started [{config.mode_label}]")
 
     yield
 
@@ -125,6 +129,11 @@ async def webhook(request: Request):
         desired = "FLAT"
 
     price = float(body.get("price", 0))
+    if price <= 0:
+        logger.warning("Rejected webhook: invalid price %s", price)
+        await _notify_trade("⚠️ Webhook rejected: invalid price (0 or negative)")
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid price"})
+
     action_label = body.get("action", "unknown")
     comment = body.get("comment", "")
 
@@ -149,6 +158,7 @@ async def webhook(request: Request):
             reason = "webhook_reverse" if desired != "FLAT" else "webhook"
             closed_trade = await _close_and_log(current_pos, price, reason)
             if closed_trade is None:
+                await _notify_trade(f"🚨 Failed to close {current_pos.direction} position!")
                 return JSONResponse(
                     status_code=500,
                     content={"ok": False, "error": "failed to close current position"},
@@ -159,6 +169,7 @@ async def webhook(request: Request):
         if desired != "FLAT":
             balance = await executor.get_balance()
             if balance is None or balance <= 0:
+                await _notify_trade("🚨 Could not fetch balance from Kraken!")
                 return JSONResponse(
                     status_code=500,
                     content={"ok": False, "error": "could not fetch balance"},
@@ -174,6 +185,7 @@ async def webhook(request: Request):
             result = await executor.open_position(desired, size, price)
             if not result.success:
                 action_desc = "partial_reverse" if closed_trade else "open_failed"
+                await _notify_trade(f"🚨 Open {desired} failed: {result.error}")
                 return JSONResponse(
                     status_code=500,
                     content={"ok": False, "error": f"open failed: {result.error}", "action": action_desc},
@@ -212,8 +224,11 @@ async def webhook(request: Request):
         if desired != "FLAT" and new_pos:
             parts.append(f"Opened {desired} @ {price:,.0f}")
             parts.append(f"Size: {new_pos.size_contracts} BTC | Notional: ${new_pos.notional_usd:,.0f}")
-        bal = closed_trade.balance_after if closed_trade else (await executor.get_balance() or 0)
-        if bal:
+        if closed_trade:
+            bal = closed_trade.balance_after
+        else:
+            bal = await executor.get_balance()
+        if bal is not None and bal > 0:
             parts.append(f"Balance: ${bal:,.2f}")
         await _notify_trade("\n".join(parts))
 
