@@ -33,6 +33,10 @@ class BotConfig:
     webhook_port: int = field(default_factory=lambda: int(os.getenv("WEBHOOK_PORT", "8080")))
     webhook_host: str = field(default_factory=lambda: os.getenv("WEBHOOK_HOST", "0.0.0.0"))
 
+    # Telegram
+    telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
+    telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
+
     # Paths
     db_path: str = field(default_factory=lambda: os.getenv("BOT_DB_PATH", "data/krakenbot.db"))
     log_dir: str = field(default_factory=lambda: os.getenv("BOT_LOG_DIR", "data/bot_logs"))

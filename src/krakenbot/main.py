@@ -17,6 +17,7 @@ from src.krakenbot.config import BotConfig
 from src.krakenbot.database import KrakenBotDatabase
 from src.krakenbot.executor import KrakenExecutor
 from src.krakenbot.models import LivePosition, LiveTrade
+from src.krakenbot.telegram import send_message as tg_send
 
 logger = logging.getLogger("krakenbot")
 
@@ -61,8 +62,14 @@ async def lifespan(app: FastAPI):
     await executor.reconcile_position()
     logger.info("KrakenBot webhook relay started [%s]", config.mode_label)
 
+    # Start 4h status loop
+    status_task = asyncio.create_task(_status_loop())
+
+    await _notify_trade(f"🟢 KrakenBot started [{config.mode_label}]")
+
     yield
 
+    status_task.cancel()
     db.close()
     logger.info("KrakenBot webhook relay stopped")
 
@@ -142,6 +149,7 @@ async def webhook(request: Request):
                 )
 
         # --- Open new position if not going flat ---
+        new_pos = None
         if desired != "FLAT":
             balance = await executor.get_balance()
             if balance is None or balance <= 0:
@@ -189,6 +197,19 @@ async def webhook(request: Request):
             action_desc = f"closed {current_dir}"
         else:
             action_desc = f"opened {desired}"
+
+        # --- Telegram notification ---
+        parts = [f"🔔 <b>{action_desc.upper()}</b>"]
+        if closed_trade:
+            parts.append(f"Closed {closed_trade.direction} @ {closed_trade.exit_price:,.0f}")
+            parts.append(f"PnL: ${closed_trade.pnl_usd:+,.2f} ({closed_trade.move_pct:+.2f}%)")
+        if desired != "FLAT" and new_pos:
+            parts.append(f"Opened {desired} @ {price:,.0f}")
+            parts.append(f"Size: {new_pos.size_contracts} BTC | Notional: ${new_pos.notional_usd:,.0f}")
+        bal = closed_trade.balance_after if closed_trade else (await executor.get_balance() or 0)
+        if bal:
+            parts.append(f"Balance: ${bal:,.2f}")
+        await _notify_trade("\n".join(parts))
 
         return {"ok": True, "action": action_desc, "detail": comment or action_label}
 
@@ -245,6 +266,54 @@ async def _close_and_log(
         trade.direction, exit_price, pnl, balance_after, reason,
     )
     return trade
+
+
+async def _notify_trade(text: str) -> None:
+    """Send a Telegram notification (no-op if not configured)."""
+    await tg_send(config.telegram_bot_token, config.telegram_chat_id, text)
+
+
+async def _status_loop() -> None:
+    """Send position status via Telegram every 4 hours."""
+    while True:
+        await asyncio.sleep(4 * 3600)
+        try:
+            pos = db.load_live_position()
+            balance = await executor.get_balance()
+            if balance is None:
+                balance = db.get_live_balance() or 0
+
+            lines = [f"📊 <b>KrakenBot Status</b>", f"Mode: {config.mode_label}"]
+
+            if pos:
+                # Estimate current price from balance calc
+                if not config.dry_run:
+                    positions = await executor.get_open_positions()
+                    current_price = pos.entry_price  # fallback
+                    for p in positions:
+                        if p.get("symbol") == config.symbol:
+                            current_price = float(p.get("markPrice", pos.entry_price))
+                            break
+                else:
+                    current_price = pos.entry_price
+
+                if pos.direction == "LONG":
+                    pnl_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+                else:
+                    pnl_pct = (pos.entry_price - current_price) / pos.entry_price * 100
+                pnl_usd = pnl_pct / 100 * pos.notional_usd
+
+                lines.append(f"Position: {pos.direction} {pos.size_contracts} BTC @ {pos.entry_price:,.0f}")
+                lines.append(f"Price: {current_price:,.0f}")
+                lines.append(f"PnL: ${pnl_usd:+,.2f} ({pnl_pct:+.2f}%)")
+            else:
+                lines.append("Position: FLAT")
+
+            lines.append(f"Balance: ${balance:,.2f}")
+
+            await _notify_trade("\n".join(lines))
+        except Exception as e:
+            logger.warning("Status loop error: %s", e)
 
 
 def main():
