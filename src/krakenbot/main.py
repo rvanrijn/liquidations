@@ -112,10 +112,14 @@ async def webhook(request: Request):
         logger.warning("Rejected webhook: invalid secret")
         return JSONResponse(status_code=401, content={"ok": False, "error": "invalid secret"})
 
-    # --- Skip Saturdays ---
-    if datetime.now(timezone.utc).weekday() == 5:
+    # --- Skip Saturdays and 20:00 UTC hour ---
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.weekday() == 5:
         logger.info("Ignored webhook: Saturday")
         return {"ok": True, "action": "no_change", "detail": "Saturday — signals ignored"}
+    if now_utc.hour == 20:
+        logger.info("Ignored webhook: 20:00 UTC hour")
+        return {"ok": True, "action": "no_change", "detail": "20:00 UTC — signals ignored"}
 
     # --- Parse desired state from position field ---
     tv_position = body.get("position", 0)
