@@ -117,9 +117,8 @@ async def webhook(request: Request):
     if now_utc.weekday() == 5:
         logger.info("Ignored webhook: Saturday")
         return {"ok": True, "action": "no_change", "detail": "Saturday — signals ignored"}
-    if now_utc.hour == 20:
-        logger.info("Ignored webhook: 20:00 UTC hour")
-        return {"ok": True, "action": "no_change", "detail": "20:00 UTC — signals ignored"}
+    # Block new entries at 20:00 UTC (London close noise), but allow exits
+    _skip_20h_entry = now_utc.hour == 20
 
     # --- Parse desired state from position field ---
     tv_position = body.get("position", 0)
@@ -170,6 +169,14 @@ async def webhook(request: Request):
                     status_code=500,
                     content={"ok": False, "error": "failed to close current position"},
                 )
+
+        # --- Block new entries at 20:00 UTC (exits already handled above) ---
+        if _skip_20h_entry and desired != "FLAT":
+            logger.info("Blocked new %s entry: 20:00 UTC hour", desired)
+            action_desc = f"closed {current_dir}" if closed_trade else "no_change"
+            if closed_trade:
+                await _notify_trade(f"🔔 <b>CLOSED {current_dir}</b>\nPnL: ${closed_trade.pnl_usd:+,.2f}\n⏳ New entry blocked (20:00 UTC)")
+            return {"ok": True, "action": action_desc, "detail": "20:00 UTC — new entry blocked"}
 
         # --- Open new position if not going flat ---
         new_pos = None
