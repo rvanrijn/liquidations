@@ -356,22 +356,38 @@ class KrakenExecutor:
 
     async def _get_fill_price(self, order_id: str, fallback_price: float) -> tuple[float, float]:
         """Query Kraken for actual fill price and size. Returns (price, size)."""
+        # Small delay to let Kraken settle the fill
+        await asyncio.sleep(1)
         try:
             resp = await asyncio.to_thread(
                 self._trade_client.get_orders_status,
                 orderIds=[order_id],
             )
+            logger.info("Order status response: %s", resp)
             orders = resp.get("orders", [])
             if orders:
                 order = orders[0]
-                # lastUpdateTimestamp price is the fill price for market orders
-                fill_price = float(order.get("lastUpdateTimestamp", 0))
                 filled_size = float(order.get("filled", 0))
-                # Try to get average fill price from order events
-                for evt in order.get("orderEvents", []):
-                    if evt.get("type") == "EXECUTION":
-                        fill_price = float(evt.get("price", 0))
-                        filled_size = float(evt.get("amount", filled_size))
+                fill_price = 0.0
+
+                # Method 1: averagePrice field (most reliable for market orders)
+                avg_price = order.get("averagePrice") or order.get("avgPrice")
+                if avg_price:
+                    fill_price = float(avg_price)
+
+                # Method 2: execution events
+                if fill_price == 0:
+                    for evt in order.get("orderEvents", []):
+                        if evt.get("type") == "EXECUTION":
+                            fill_price = float(evt.get("price", 0))
+                            filled_size = float(evt.get("amount", filled_size))
+
+                # Method 3: lastPrice field
+                if fill_price == 0:
+                    last_price = order.get("lastPrice")
+                    if last_price:
+                        fill_price = float(last_price)
+
                 if fill_price > 0 and filled_size > 0:
                     slippage = (fill_price - fallback_price) / fallback_price * 100
                     logger.info(
@@ -379,6 +395,9 @@ class KrakenExecutor:
                         fill_price, fallback_price, slippage,
                     )
                     return fill_price, filled_size
+                elif filled_size > 0:
+                    logger.warning("Got filled_size=%.4f but no fill price — using fallback", filled_size)
+                    return fallback_price, filled_size
         except Exception as e:
             logger.warning("Could not fetch fill price: %s", e)
         return fallback_price, 0.0
