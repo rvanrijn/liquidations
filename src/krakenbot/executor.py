@@ -133,7 +133,7 @@ class KrakenExecutor:
 
     def calculate_position_size(self, balance: float, entry_price: float) -> float:
         """Calculate position size in BTC (PF_XBTUSD: size is in BTC)."""
-        notional = balance * self.config.leverage * 0.95  # 5% buffer for fees/rounding
+        notional = balance * self.config.leverage * 0.90  # 10% buffer for fees/margin
         qty_btc = notional / entry_price
         # Round down to 4 decimal places (0.0001 BTC minimum step)
         qty_btc = int(qty_btc * 10000) / 10000

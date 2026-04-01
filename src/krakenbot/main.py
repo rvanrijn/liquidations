@@ -193,7 +193,7 @@ async def webhook(request: Request):
             # Circuit breaker: drop to 1x after 3 consecutive losses
             consecutive_losses = db.get_consecutive_losses()
             effective_leverage = 1 if consecutive_losses >= 3 else config.leverage
-            size = balance * effective_leverage * 0.95 / price
+            size = balance * effective_leverage * 0.90 / price
             size = int(size * 10000) / 10000  # round down to 0.0001
             if consecutive_losses >= 3:
                 logger.info("CIRCUIT BREAKER: %d consecutive losses → 1x leverage", consecutive_losses)
