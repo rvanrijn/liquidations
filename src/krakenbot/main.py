@@ -151,7 +151,20 @@ async def webhook(request: Request):
     # --- Serialize execution ---
     async with _lock:
         _last_webhook_time = _time()
+
+        # --- Reconcile: sync DB with Kraken's actual state ---
         current_pos = db.load_live_position()
+        if current_pos and not config.dry_run:
+            kraken_positions = await executor.get_open_positions()
+            has_kraken_pos = any(
+                p.get("symbol") == config.symbol for p in kraken_positions
+            )
+            if not has_kraken_pos:
+                logger.warning("RECONCILE: DB has %s but Kraken is flat — clearing DB", current_pos.direction)
+                await _notify_trade(f"⚠️ Position closed outside bot — clearing {current_pos.direction} from DB")
+                db.clear_live_position()
+                current_pos = None
+
         current_dir = current_pos.direction if current_pos else "FLAT"
 
         if current_dir == desired:
