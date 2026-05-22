@@ -59,9 +59,11 @@ magnet, up for a SHORT magnet.
 ## Data Availability & Constraints
 
 `battles_v2` stores only *aggregate* snapshot features per battle, not the full
-per-level liquidation heatmap or order book. Available and well-populated:
-`snapshot_price`, `total_long_usd` / `total_short_usd` (all 1075),
-`oi_start_usd` (1056), `funding_rate` (1044), `imbalance_ratio`, `bigger_side`.
+per-level liquidation heatmap or order book. Available and well-populated (all
+1,075 rows): `snapshot_price`, `total_long_usd` / `total_short_usd`,
+`oi_start_usd`, `funding_rate`, `imbalance_ratio`, `bigger_side`. The implementer
+should confirm live non-null counts when writing the report's Data Availability
+section.
 
 Consequences:
 - The agent population is **synthesized** from these aggregates — a Monte Carlo
@@ -116,8 +118,12 @@ battles × the robustness settings runs in seconds-to-minutes, fully offline.
 ### Reflexive cascade loop (the differentiator)
 
 1. Apply an initial price shock toward the magnet side. Shock magnitude is a
-   model parameter (a fixed multiple of a recent move/volatility scale derived
-   from snapshot-time data) — **not** fit to the target.
+   model parameter (a multiple of a recent move/volatility scale derived
+   from snapshot-time data) — **not** fit to the target. The shock is **drawn
+   stochastically per Monte Carlo sim** (e.g., from a distribution around the
+   volatility-derived center) rather than held at a single fixed value, so that
+   both `cascade_prob` and `cascade_prob_fo` have meaningful spread across sims
+   rather than collapsing to all-0/all-1.
 2. Liquidate every agent whose `liq_price` is crossed by the current price.
 3. Their combined liquidated notional becomes a forced market order. Apply price
    impact via a **square-root impact function**: `Δp = k · √(notional / depth)`.
@@ -176,7 +182,12 @@ All comparisons predict `hypothesis_correct`.
 **Baseline:** the current sigmoid score, recomputed from battle features.
 Reported twice — once as-is, once **excluding the lookahead-contaminated
 `oi_change_pct`** — to give a clean apples-to-apples bar against the
-lookahead-clean ABM.
+lookahead-clean ABM. The three live-only sigmoid features absent from
+`battles_v2` (`price_range_6h`, `oi_velocity`, `taker_ratio`) are **dropped from
+the baseline** rather than imputed — their contribution is renormalized out of
+`WEIGHT_SUM` so the baseline is an honest reconstruction over only the features
+actually present (OI, imbalance, funding; note current `W_FUND = 0.0`). This is
+stated explicitly in the report.
 
 **Cross-validation strategy (locked):** **time-series CV** (expanding-window or
 rolling-forward folds ordered by `timestamp`), **not** random k-fold. The 1,075
