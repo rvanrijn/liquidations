@@ -40,8 +40,8 @@ class CascadeParams:
     entry_window_pct: float = 0.015     # uniform ±window around snapshot_price
 
     # Shock — drawn per Monte Carlo sim (gives cascade_prob_fo real spread)
-    shock_center_pct: float = 0.003
-    shock_std_pct: float = 0.0015
+    shock_center_pct: float = 0.003     # mean initial shock toward magnet (0.3%)
+    shock_std_pct: float = 0.0015      # stdev of the per-sim shock draw
 
     # Price impact: dp_fraction = impact_k * sqrt(liquidated_notional / depth)
     impact_k: float = 0.4
