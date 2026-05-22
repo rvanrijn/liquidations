@@ -70,10 +70,12 @@ Consequences:
   over a parametric distribution, not a replay of real positions. The result
   shows whether the *mechanism* has predictive structure, not a tradeable number.
 - Sanity check passed: `total_long_usd + total_short_usd ≈ oi_start_usd`.
-- The `_usd` pool fields are in an ambiguous/relative unit (values ~10⁴–10⁵, not
-  literal USD notional). Because every battle uses the same unit, the price-impact
-  scale is **relative across battles** — fine for ranking and probability
-  estimation, flagged as a caveat in the report.
+- The `_usd` pool fields are NOT literal USD notional, and the unit is
+  *inconsistent across the dataset's collection eras* (values span ~10⁴ to ~10⁹).
+  This is acceptable because the price-impact term uses the ratio
+  `notional/depth` (both from the same per-row pool), so absolute scale cancels
+  per battle and `cascade_prob` reflects the **relative** leverage/imbalance
+  structure — fine for ranking and probability estimation, flagged in the report.
 
 **Lookahead discipline (important):** Per known project bias, `oi_change_pct` is
 measured at battle *resolution*, not at entry — it is partially lookahead-
