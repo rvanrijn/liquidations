@@ -117,7 +117,7 @@ RS rank is cross-sectional — it cannot come from one name's frame. This module
 *before* per-name tier assignment:
 - Aligns every universe name's trailing 6-month return on a common date index.
 - For each date, ranks names into a percentile (RS rank). A name with a missing bar on
-  a given date is **excluded from that date's ranking denominator** (not forward-filled),
+  a given date is **excluded from that date's ranked set** (not forward-filled),
   so percentiles reflect only names actually trading that day.
 - Emits a per-(name, date) RS-rank value consumed identically by research and live.
 The RS *line* (price / SPY) is per-name and lives in `signals.py`; only the *rank* is
