@@ -177,3 +177,111 @@ class Journal:
                 return json.load(f)
         except FileNotFoundError:
             return None
+
+
+# ─── Position + Strategy state machine ───────────────────────────────────────
+
+@dataclass
+class Position:
+    entry_price: float
+    entry_ts: int
+    stop_price: float
+    notional: float = CAPITAL
+
+
+class Strategy:
+    """FLAT -> ARMED_ENTRY -> LONG -> FLAT. Driven by bar closes + trades."""
+
+    def __init__(self, indicators, fillsim, journal,
+                 entry_rsi=ENTRY_RSI, exit_rsi=EXIT_RSI, stop_pct=STOP_PCT,
+                 capital=CAPITAL, maker_fee=MAKER_FEE, taker_fee=TAKER_FEE,
+                 tif_sec=ENTRY_TIF_SEC):
+        self.ind = indicators
+        self.fs = fillsim
+        self.j = journal
+        self.entry_rsi = entry_rsi
+        self.exit_rsi = exit_rsi
+        self.stop_pct = stop_pct
+        self.capital = capital
+        self.maker_fee = maker_fee
+        self.taker_fee = taker_fee
+        self.tif_sec = tif_sec
+        self.state = "FLAT"
+        self.position: Position | None = None
+        self.balance = capital
+        self._arm_price = 0.0
+        self._arm_placed_ts = 0
+        self._exit_armed = False
+
+    # ── test/internal hooks ──────────────────────────────────────────────
+    def _force_arm(self, price, ts):
+        self._arm_price = price
+        self._arm_placed_ts = ts
+        self.fs.place(RestingOrder("BUY", price, "ENTRY", ts, ts + self.tif_sec * 1000))
+        self.state = "ARMED_ENTRY"
+        self.j.record("ARM", {"price": price, "ts": ts})
+
+    def _force_exit_arm(self, price, ts):
+        self.fs.cancel("EXIT")
+        self.fs.place(RestingOrder("SELL", price, "EXIT", ts))
+        self._exit_armed = True
+        self.j.record("EXIT_ARM", {"price": price, "ts": ts})
+
+    # ── event handlers ───────────────────────────────────────────────────
+    def on_bar_close(self, candle):
+        close, ts = float(candle["close"]), int(candle["ts"])
+        self.ind.update(close)
+        if not self.ind.ready:
+            return
+        if self.state == "ARMED_ENTRY":
+            if self.fs.expire(ts):                       # TIF elapsed
+                self.state = "FLAT"
+                self.j.record("MISS", {"ts": ts})
+            return
+        if self.state == "FLAT":
+            if self.ind.rsi < self.entry_rsi and close > self.ind.ema:
+                self.j.record("SIGNAL", {"rsi": self.ind.rsi, "price": close, "ts": ts})
+                self._force_arm(close, ts)
+        elif self.state == "LONG":
+            if self.ind.rsi >= self.exit_rsi:
+                self._force_exit_arm(close, ts)
+
+    def on_trade(self, price, ts):
+        price, ts = float(price), int(ts)
+        for fill in self.fs.check(price, ts):
+            self._apply_fill(fill, ts)
+
+    def on_gap(self, now_ts):
+        # any resting order interrupted by a gap is indeterminate, not a miss
+        self.fs.cancel("ENTRY")
+        self.fs.cancel("EXIT")
+        self.fs.cancel("STOP")
+        self.j.record("GAP", {"ts": now_ts})
+        self.state = "FLAT"
+        self.position = None
+        self._exit_armed = False
+
+    # ── fill application ─────────────────────────────────────────────────
+    def _apply_fill(self, fill, ts):
+        if fill.kind == "ENTRY":
+            ttf = (ts - self._arm_placed_ts) / 1000.0
+            self.position = Position(
+                entry_price=fill.price, entry_ts=ts,
+                stop_price=fill.price * (1 - self.stop_pct))
+            self.balance *= (1 - self.maker_fee)             # entry maker leg
+            self.fs.place(RestingOrder("SELL", self.position.stop_price, "STOP", ts))
+            self.state = "LONG"
+            self._exit_armed = False
+            self.j.record("FILL", {"kind": "ENTRY", "price": fill.price,
+                                   "ttf_sec": ttf, "ts": ts})
+        elif fill.kind in ("EXIT", "STOP"):
+            ret = fill.price / self.position.entry_price - 1
+            leg_fee = self.maker_fee if fill.kind == "EXIT" else self.taker_fee
+            self.balance *= (1 + ret) * (1 - leg_fee)
+            self.fs.cancel("STOP"); self.fs.cancel("EXIT")
+            self.j.record("FILL", {"kind": fill.kind, "price": fill.price, "ret": ret,
+                                   "missed_exit": fill.kind == "STOP" and self._exit_armed,
+                                   "ts": ts})
+            self.position = None
+            self._exit_armed = False
+            self.state = "FLAT"
