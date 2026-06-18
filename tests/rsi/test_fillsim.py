@@ -50,6 +50,17 @@ def test_stop_precedence_over_exit_on_same_print():
     assert len(fills) == 1 and fills[0].kind == "STOP"
 
 
+def test_stop_precedence_when_print_truly_triggers_both():
+    # print satisfies BOTH legs simultaneously: STOP@110 (<=110) and EXIT@100 (>=100).
+    # stop must win and the exit must remain resting (only one position-closing fill).
+    fs = FillSim()
+    fs.place(RestingOrder(side="SELL", price=100.0, kind="EXIT", placed_ts=0, expiry_ts=None))
+    fs.place(RestingOrder(side="SELL", price=110.0, kind="STOP", placed_ts=0, expiry_ts=None))
+    fills = fs.check(105.0, ts=1)
+    assert len(fills) == 1 and fills[0].kind == "STOP" and fills[0].price == 110.0
+    assert fs.has("EXIT")          # exit still resting, not consumed
+
+
 def test_cancel_by_kind():
     fs = FillSim()
     fs.place(RestingOrder(side="SELL", price=110.0, kind="EXIT", placed_ts=0, expiry_ts=None))

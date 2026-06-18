@@ -6,7 +6,7 @@ See docs/superpowers/specs/2026-06-18-rsi-maker-paper-trader-design.md
 """
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from rsi_backtest import calculate_rsi, ema  # same-dir import (see conftest / __main__)
 
