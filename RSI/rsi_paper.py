@@ -5,6 +5,9 @@ Measures the real maker limit fill rate that OHLCV backtesting could not.
 See docs/superpowers/specs/2026-06-18-rsi-maker-paper-trader-design.md
 """
 
+import json
+import time as _time
+
 import numpy as np
 from dataclasses import dataclass
 
@@ -112,3 +115,65 @@ class FillSim:
                 self._orders.remove(o)
                 fills.append(Fill(kind=o.kind, price=o.price, ts=ts))
         return fills
+
+
+# ─── Journal (event log + metric counters + state persistence) ────────────────
+
+class Journal:
+    """Append-only event log + state file + in-memory metric counters."""
+
+    def __init__(self, events_path=None, state_path=None):
+        self.events_path = events_path
+        self.state_path = state_path
+        self.entry_arms = self.entry_fills = 0
+        self.exit_arms = self.exit_fills = 0
+        self.missed_exit_to_stop = 0
+        self.trades = 0
+        self._ttf: list[float] = []
+
+    def record(self, event: str, data: dict):
+        if event == "ARM":
+            self.entry_arms += 1
+        elif event == "EXIT_ARM":
+            self.exit_arms += 1
+        elif event == "MISS":
+            pass
+        elif event == "FILL":
+            if data.get("kind") == "ENTRY":
+                self.entry_fills += 1
+                if "ttf_sec" in data:
+                    self._ttf.append(data["ttf_sec"])
+            elif data.get("kind") == "EXIT":
+                self.exit_fills += 1
+                self.trades += 1
+            elif data.get("kind") == "STOP":
+                self.trades += 1
+                if data.get("missed_exit"):
+                    self.missed_exit_to_stop += 1
+        if self.events_path is not None:
+            rec = {"event": event, **data}
+            with open(self.events_path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+
+    def entry_fill_rate(self):
+        return self.entry_fills / self.entry_arms if self.entry_arms else 0.0
+
+    def exit_fill_rate(self):
+        return self.exit_fills / self.exit_arms if self.exit_arms else 0.0
+
+    def avg_ttf_sec(self):
+        return sum(self._ttf) / len(self._ttf) if self._ttf else 0.0
+
+    def save_state(self, state: dict):
+        if self.state_path is not None:
+            with open(self.state_path, "w") as f:
+                json.dump(state, f)
+
+    def load_state(self):
+        if self.state_path is None:
+            return None
+        try:
+            with open(self.state_path) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return None
