@@ -5,13 +5,17 @@ Measures the real maker limit fill rate that OHLCV backtesting could not.
 See docs/superpowers/specs/2026-06-18-rsi-maker-paper-trader-design.md
 """
 
+import argparse
+import asyncio
 import json
+import logging
 import time as _time
 
 import numpy as np
+import websockets
 from dataclasses import dataclass
 
-from rsi_backtest import calculate_rsi, ema  # same-dir import (see conftest / __main__)
+from rsi_backtest import calculate_rsi, ema, fetch_ohlcv  # same-dir import (see conftest / __main__)
 
 # ─── Config (locked from the validated backtest; CLI-overridable) ────────────
 SYMBOL = "BTCUSDT"
@@ -318,3 +322,140 @@ def run_replay(candles, **kw):
         "exit_fills": j.exit_fills,
         "missed_exit_to_stop": j.missed_exit_to_stop,
     }
+
+
+# ─── Live feed ────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger("rsi_paper")
+WS_URL = ("wss://stream.binance.com:9443/stream?"
+          "streams=btcusdt@kline_1m/btcusdt@aggTrade")
+
+
+class Feed:
+    def __init__(self, on_trade, on_bar_close, on_reconnect=None, url=WS_URL):
+        self.on_trade = on_trade
+        self.on_bar_close = on_bar_close
+        self.on_reconnect = on_reconnect
+        self.url = url
+
+    async def run(self):
+        backoff = 1
+        while True:
+            try:
+                async with websockets.connect(self.url, ping_interval=20) as ws:
+                    backoff = 1
+                    if self.on_reconnect:
+                        self.on_reconnect()
+                    async for raw in ws:
+                        self._dispatch(raw)
+            except Exception as e:  # noqa: BLE001 — keep the loop alive
+                logger.warning("ws error: %s; reconnecting in %ds", e, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
+    def _dispatch(self, raw):
+        try:
+            msg = json.loads(raw)
+            data = msg.get("data", msg)
+            if data.get("e") == "aggTrade":
+                self.on_trade(float(data["p"]), int(data["T"]))
+            elif data.get("e") == "kline" and data["k"]["x"]:
+                k = data["k"]
+                self.on_bar_close({"close": float(k["c"]), "ts": int(k["T"])})
+        except Exception as e:  # noqa: BLE001 — never crash on one bad msg
+            logger.debug("skip msg: %s", e)
+
+
+# ─── REST seeding ─────────────────────────────────────────────────────────────
+
+def seed_indicators(ind, symbol="BTC/USDT", bars=SEED_BARS):
+    since = int((_time.time() - bars * 60) * 1000)
+    candles = fetch_ohlcv(symbol, "1m", since)
+    ind.seed([c[4] for c in candles[-bars:]])
+    return candles
+
+
+# ─── Live run loop ────────────────────────────────────────────────────────────
+
+def summary_line(s, j, last_ts, started_ts):
+    days = (last_ts - started_ts) / 86_400_000 if last_ts > started_ts else 0.0
+    return (f"{days:.1f}d  trades {j.trades}  "
+            f"entryFill {j.entry_fills}/{j.entry_arms} ({j.entry_fill_rate()*100:.0f}%)  "
+            f"exitFill {j.exit_fills}/{j.exit_arms} ({j.exit_fill_rate()*100:.0f}%)  "
+            f"missedExit->stop {j.missed_exit_to_stop}  "
+            f"avgTTF {j.avg_ttf_sec():.0f}s  bal ${s.balance:,.0f}")
+
+
+async def _summary_loop(s, j, clock, interval=300):
+    while True:
+        await asyncio.sleep(interval)
+        line = summary_line(s, j, clock["last_ts"], clock["started_ts"])
+        logger.info(line)
+        print(line, flush=True)
+        j.save_state({"balance": s.balance,
+                      "position": s.position.__dict__ if s.position else None})
+
+
+async def run_live(args):
+    import os
+    os.makedirs("RSI/data", exist_ok=True)
+    ind = Indicators()
+    seed_indicators(ind, bars=SEED_BARS)
+    j = Journal(events_path="RSI/data/rsi_paper_events.jsonl",
+                state_path="RSI/data/rsi_paper_state.json")
+    s = Strategy(ind, FillSim(), j)
+    # NOTE: indicators always recomputed from fresh seed; only restore balance here
+    prior = j.load_state()
+    if prior:
+        s.balance = prior.get("balance", s.balance)
+
+    # exchange-time tracking + gap handling
+    clock = {"last_ts": 0, "started_ts": 0, "first": True}
+
+    def on_trade(price, ts):
+        if clock["first"]:
+            clock["started_ts"] = ts
+            clock["first"] = False
+        clock["last_ts"] = ts
+        s.on_trade(price, ts)
+
+    def on_bar_close(candle):
+        clock["last_ts"] = max(clock["last_ts"], int(candle["ts"]))
+        s.on_bar_close(candle)
+
+    first_connect = {"v": True}
+
+    def on_reconnect():
+        if first_connect["v"]:           # initial connect is not a gap
+            first_connect["v"] = False
+            return
+        seed_indicators(ind, bars=SEED_BARS)   # refresh indicators across the gap
+        if s.state != "FLAT" or s.fs.has("ENTRY"):
+            s.on_gap(clock["last_ts"])          # mark interrupted order indeterminate
+
+    feed = Feed(on_trade=on_trade, on_bar_close=on_bar_close, on_reconnect=on_reconnect)
+    asyncio.create_task(_summary_loop(s, j, clock))
+    await feed.run()
+
+
+# ─── CLI / entry point ────────────────────────────────────────────────────────
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    p = argparse.ArgumentParser(description="BTC RSI maker paper trader")
+    p.add_argument("mode", choices=["run", "replay"], default="run", nargs="?")
+    p.add_argument("--days", type=int, default=30, help="replay window")
+    args = p.parse_args()
+    if args.mode == "replay":
+        since = int((_time.time() - args.days * 86400) * 1000)
+        candles = fetch_ohlcv("BTC/USDT", "1m", since)
+        print(run_replay(candles))
+    else:
+        asyncio.run(run_live(args))
+
+
+if __name__ == "__main__":
+    import sys
+    import pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    main()
