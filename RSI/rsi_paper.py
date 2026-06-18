@@ -53,3 +53,62 @@ class Indicators:
     @property
     def ema(self):
         return ema(np.array(self._closes, dtype=float), self.ema_period)[-1]
+
+
+# ─── Order types + fill engine ───────────────────────────────────────────────
+
+@dataclass
+class RestingOrder:
+    side: str            # "BUY" | "SELL"
+    price: float
+    kind: str            # "ENTRY" | "EXIT" | "STOP"
+    placed_ts: int
+    expiry_ts: int | None = None   # absolute ms; ENTRY only
+
+
+@dataclass
+class Fill:
+    kind: str
+    price: float         # always the order's limit/stop price
+    ts: int
+
+
+class FillSim:
+    """Holds resting orders; decides fills on each live print. Pure logic."""
+
+    def __init__(self):
+        self._orders: list[RestingOrder] = []
+
+    def place(self, order: RestingOrder):
+        self._orders.append(order)
+
+    def cancel(self, kind: str):
+        self._orders = [o for o in self._orders if o.kind != kind]
+
+    def has(self, kind: str) -> bool:
+        return any(o.kind == kind for o in self._orders)
+
+    def expire(self, now_ts: int) -> list[RestingOrder]:
+        """Remove + return ENTRY orders past their TIF."""
+        expired = [o for o in self._orders
+                   if o.expiry_ts is not None and now_ts >= o.expiry_ts]
+        if expired:
+            self._orders = [o for o in self._orders if o not in expired]
+        return expired
+
+    def check(self, price: float, ts: int) -> list[Fill]:
+        """Return fills triggered by this print. STOP has precedence; at most
+        one position-closing fill per print."""
+        # stop first (worst-case precedence)
+        for o in self._orders:
+            if o.kind == "STOP" and price <= o.price:
+                self._orders.remove(o)
+                return [Fill(kind="STOP", price=o.price, ts=ts)]
+        fills = []
+        for o in list(self._orders):
+            hit = (o.side == "BUY" and price <= o.price) or \
+                  (o.side == "SELL" and o.kind == "EXIT" and price >= o.price)
+            if hit:
+                self._orders.remove(o)
+                fills.append(Fill(kind=o.kind, price=o.price, ts=ts))
+        return fills
