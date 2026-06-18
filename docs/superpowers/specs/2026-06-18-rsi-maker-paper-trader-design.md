@@ -35,6 +35,12 @@ but these are the defaults):
 | Entry order | resting maker BUY limit at the signal-bar close |
 | Entry TIF | 1 bar (60s); cancel + mark MISS if unfilled |
 | Exit (TP) | while LONG and `RSI ≥ 55`, resting maker SELL limit at latest close, re-priced each minute |
+
+> **Exit threshold note:** the validated forward config uses **exit RSI ≥ 55**, which
+> overrides the `rsi_backtest.py` *default* of `exit_rsi=50`. The investigation's Part A
+> (robustness) and Part C (maker + EMA200 filter) runs all passed `exit_rsi=55`
+> explicitly; 50–55 was the flat optimum and 55 was carried forward. The live tool must
+> set 55, not inherit the module default.
 | Stop | 2% below entry, taker stop-market, always fills |
 | Capital | $5,000, long-only, one position at a time |
 | Maker fee | -0.005%/side default (rebate; configurable) |
@@ -46,8 +52,9 @@ dashboard, no orderbook queue modelling.
 ## Architecture — Approach A
 
 A single new async file `RSI/rsi_paper.py` (~400 lines) reusing `calculate_rsi` and
-`ema` from `RSI/rsi_backtest.py` so live indicators are byte-for-byte identical to the
-backtest. Five focused, independently testable units:
+`ema` from `RSI/rsi_backtest.py` so live indicators use the **identical formula** to
+the backtest (identical *values* hold only given the same input series — EMA200 is
+path-dependent, see Seeding below). Five focused, independently testable units:
 
 | Unit | Responsibility | Depends on |
 |---|---|---|
@@ -79,20 +86,42 @@ States: `FLAT → ARMED_ENTRY → LONG → FLAT`.
 (market sold into it); a resting SELL on a print `≥` its price. The stop is a
 stop-market: any print through it fills immediately as taker.
 
-Stop precedence: if a single print satisfies both stop and a (lower) exit limit, the
-stop takes precedence (worst-case assumption).
+**Fill price (critical for PnL):** a maker order always fills **at its own resting
+limit price**, never at the (more favorable) trade price that triggered it. So an entry
+fills at the signal-bar close, and a TP fills at the resting SELL limit price — even
+when the triggering print is below/above that level. The stop fills at the stop price.
+Recording the trigger trade price instead would silently inflate the measured edge,
+corrupting the one number this tool exists to produce.
+
+**Post-only assumption:** the entry BUY is placed at the signal-bar close while price
+is falling (oversold), so it normally rests below market and behaves as a true maker
+(post-only) order — which is exactly why the `≤ limit` rule models it. If a signal
+ever placed a marketable limit, the paper sim still treats it as resting (post-only);
+a real venue rejecting such an order is noted as a limitation, not modelled.
+
+Stop precedence: if a single print would trigger both the stop and an exit limit, the
+stop wins (worst-case assumption).
 
 ## Data Flow, Seeding & Reconnect
 
-**Startup:** REST-fetch the last ~250 closed 1m candles (200 for EMA + warmup) → seed
-`Indicators` → load `rsi_paper_state.json` if present (restore balance, open position,
-resting orders, counters) → open the combined websocket.
+**Startup:** REST-fetch the last **~1000 closed 1m candles** → seed `Indicators` → load
+`rsi_paper_state.json` if present (restore balance, open position, resting orders,
+counters) → open the combined websocket. 1000 bars (one REST page) gives EMA200 ≈5×
+its period of warmup so the recursive EMA has effectively converged before any signal
+is acted on — 250 bars (the bare minimum for a first value) would leave EMA200 visibly
+off its converged path. The Strategy must refuse to act on signals until the buffer is
+fully seeded (no trading on a short/NaN buffer).
 
 **Steady state:**
 - `aggTrade` print → update last price → `FillSim.check(price)` → may fill
   entry/exit/stop → `Strategy` transitions → `Journal` logs.
 - `kline_1m` close → append close → recompute RSI+EMA → `Strategy` bar logic (arm
   entry / expire TIF / re-price exit / update unrealized MFE & MAE).
+
+**Indicators on resume:** indicators are always recomputed from the fresh REST seed,
+never restored from `state.json` — they are stateless given the series, so a resumed
+open position re-derives its RSI/EMA context from the seed buffer (only position/order
+state is restored). This avoids any drift between persisted and recomputed indicators.
 
 **Reconnect & gaps:** websocket drop → exponential backoff reconnect → on resume,
 REST-refetch missed candles and emit a `GAP` event. **Gaps are recorded as gaps, not
@@ -109,12 +138,19 @@ Two files in `RSI/data/` (gitignored):
 - `rsi_paper_state.json` — rewritten on each change: balance, open position, resting
   orders, counters. Enables clean resume.
 
-**Summary line** (every 5 min and on every trade close; also appended to log):
+**Summary line** (every 5 min of *exchange* time and on every trade close; also
+appended to log):
 ```
 9d  trades 12  entryFill 41/47 (87%)  exitFill 33/41 (80%)  missedExit→stop 4
     avgTTF 18s  grossPnL +$71  netPnL(+rebate) +$84  bal $5084
 ```
 `exitFill` and `missedExit→stop` are the decision-driving metrics.
+
+**Net PnL definition:** `netPnL = grossPnL + maker rebates − taker fees`, where gross
+is the sum of per-trade price moves on $5k notional, maker rebates apply to filled
+entry and TP legs (positive when the maker fee is negative), and taker fees apply to
+stop legs. No slippage term — maker fills are at the limit price by construction and
+the taker stop fills at the stop price.
 
 ## Error Handling
 
