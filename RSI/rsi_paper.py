@@ -284,3 +284,37 @@ class Strategy:
             self.position = None
             self._exit_armed = False
             self.state = "FLAT"
+
+
+# ─── Offline replay mode ──────────────────────────────────────────────────────
+
+def run_replay(candles, **kw):
+    """Drive the full engine from historical 1m OHLCV candles for smoke-testing
+    and backtest reconciliation.
+
+    Intrabar fill proxy: for each candle we emit the bar LOW then the bar HIGH
+    so that resting BUY / SELL / STOP orders can trigger.  This is intentionally
+    a rough approximation — it is NOT a fill-rate measurement.  Live maker fills
+    depend on queue position and real tick-by-tick price, which OHLCV history
+    cannot reproduce.  Use this only to confirm the engine runs end-to-end and
+    that the P&L direction is broadly consistent with the backtest.
+    """
+    ind = Indicators()
+    ind.seed([c[4] for c in candles[:EMA_PERIOD]])
+    fs = FillSim()
+    j = Journal(events_path=None, state_path=None)
+    s = Strategy(ind, fs, j, **kw)
+    for c in candles[EMA_PERIOD:]:
+        ts, _o, hi, lo, close, _v = c
+        # proxy intrabar path: low then high (pessimistic for longs)
+        s.on_trade(lo, ts)
+        s.on_trade(hi, ts)
+        s.on_bar_close({"close": close, "ts": ts})
+    return {
+        "balance": s.balance,
+        "trades": j.trades,
+        "entry_arms": j.entry_arms,
+        "entry_fills": j.entry_fills,
+        "exit_fills": j.exit_fills,
+        "missed_exit_to_stop": j.missed_exit_to_stop,
+    }
