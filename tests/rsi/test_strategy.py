@@ -79,8 +79,31 @@ def test_gap_while_armed_marks_indeterminate():
     s.on_gap(now_ts=120_000)
     assert s.state == "FLAT"
     assert not fs.has("ENTRY")
-    # arm that was interrupted is NOT counted as a miss
-    assert j.entry_arms == 1 and j.entry_fills == 0
+    # interrupted arm is indeterminate -> excluded from the denominator, not a miss
+    assert j.entry_arms == 0 and j.entry_fills == 0
+
+
+def test_gap_while_long_voids_trade_and_excludes_exit_arm():
+    s, ind, fs, j = _mk(_series_to(True))
+    s._force_arm(price=100.0, ts=0)
+    s.on_trade(price=100.0, ts=10_000)        # LONG @100, entry fee applied
+    s._force_exit_arm(price=110.0, ts=20_000) # exit armed (exit_arms == 1)
+    s.on_gap(now_ts=120_000)
+    assert s.state == "FLAT" and s.position is None
+    assert j.exit_arms == 0                    # indeterminate exit excluded
+    assert j.entry_arms == 1 and j.entry_fills == 1  # the real entry fill stays
+    assert abs(s.balance - 5000.0) < 1e-6      # abandoned trade voided (entry fee reversed)
+
+
+def test_no_entry_when_below_ema_even_if_rsi_low():
+    closes = _series_to(target_rsi_low=True)
+    s, ind, fs, j = _mk(closes)
+    # update indicators by closing one more bar far BELOW the EMA with low RSI
+    ema_now = ind.ema
+    s.on_bar_close({"close": ema_now - 50.0, "ts": 60_000})
+    assert ind.rsi < 30           # precondition: oversold
+    assert not fs.has("ENTRY")    # but below EMA -> regime gate blocks the arm
+    assert j.entry_arms == 0
 
 
 def test_exit_reprice_counts_one_arm_opportunity():

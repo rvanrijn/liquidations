@@ -173,6 +173,14 @@ class Journal:
             with open(self.events_path, "a") as f:
                 f.write(json.dumps(rec) + "\n")
 
+    def exclude_arm(self, entry=False, exit=False):
+        """Back out an arm whose outcome was made indeterminate (e.g. by a gap),
+        so it is excluded from the fill-rate denominator."""
+        if entry and self.entry_arms > 0:
+            self.entry_arms -= 1
+        if exit and self.exit_arms > 0:
+            self.exit_arms -= 1
+
     def entry_fill_rate(self):
         return self.entry_fills / self.entry_arms if self.entry_arms else 0.0
 
@@ -269,11 +277,22 @@ class Strategy:
             self._apply_fill(fill, ts)
 
     def on_gap(self, now_ts):
-        # any resting order interrupted by a gap is indeterminate, not a miss
+        # capture state BEFORE reset to decide what was indeterminate
+        was_armed_entry = (self.state == "ARMED_ENTRY")
+        had_resting_exit = self._exit_armed
+        had_position = self.position is not None
+        # cancel all resting orders — their outcomes are now indeterminate
         self.fs.cancel("ENTRY")
         self.fs.cancel("EXIT")
         self.fs.cancel("STOP")
-        self.j.record("GAP", {"ts": now_ts})
+        self.j.record("GAP", {"ts": now_ts,
+                               "voided_entry_arm": was_armed_entry,
+                               "voided_exit_arm": had_resting_exit,
+                               "voided_position": had_position})
+        self.j.exclude_arm(entry=was_armed_entry, exit=had_resting_exit)
+        if had_position:
+            # reverse the entry maker fee — the abandoned trade is voided
+            self.balance /= (1 - self.maker_fee)
         self.state = "FLAT"
         self.position = None
         self._exit_armed = False
@@ -318,7 +337,7 @@ def run_replay(candles, **kw):
     that the P&L direction is broadly consistent with the backtest.
     """
     ind = Indicators()
-    ind.seed([c[4] for c in candles[:EMA_PERIOD]])
+    ind.seed([c[4] for c in candles[:EMA_PERIOD]])  # EMA200 minimally warmed in replay (200 bars); acceptable — replay is a labelled non-measurement smoke test; live mode seeds 1000
     fs = FillSim()
     j = Journal(events_path=None, state_path=None)
     s = Strategy(ind, fs, j, **kw)
