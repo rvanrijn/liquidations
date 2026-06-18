@@ -6,7 +6,7 @@
 
 **Architecture:** A single self-contained async module `RSI/rsi_paper.py` with five pure/thin units (Indicators, FillSim, Strategy, Journal, Feed) reusing `calculate_rsi`/`ema` from `RSI/rsi_backtest.py`. The pure core (Indicators, FillSim, Strategy, Journal) is TDD'd with synthetic data and a fake feed; the thin websocket Feed is verified live. State persists to JSONL + a JSON state file for resume.
 
-**Tech Stack:** Python 3.11, asyncio, `websockets` (existing dep, see `src/clients/base.py`), `aiohttp` (existing, REST seed), `numpy`, `pytest` + `pytest-asyncio`.
+**Tech Stack:** Python 3.11, asyncio, `websockets` (existing dep, see `src/clients/base.py`), `ccxt` (transitively, via `rsi_backtest.fetch_ohlcv` — already installed), `numpy`, `pytest` + `pytest-asyncio`.
 
 **Spec:** `docs/superpowers/specs/2026-06-18-rsi-maker-paper-trader-design.md` — read it before starting.
 
@@ -899,11 +899,10 @@ class Feed:
 
 - [ ] **Step 3: Implement `run_live` + summary loop + state save**
 
-Wire it together: seed → restore state → build Strategy → start Feed → every 5 min (exchange time, off the latest trade ts) print the summary line and `save_state`. On reconnect, refetch candles since the last seen bar and call `strategy.on_gap` if a position/order was resting.
+Wire it together: seed → restore state → build Strategy → start Feed → every 5 min print the summary line and `save_state`. **Crucially, wire the gap handler** (spec requirement): track the last-seen bar ts; on reconnect, REST-refetch candles since then, re-seed indicators, and — only if a position or resting order spanned the gap — call `strategy.on_gap` so the interrupted order is marked indeterminate (not a miss). The summary cadence is driven off the latest trade ts to stay on exchange time.
 ```python
-def summary_line(s, j, started_ts, last_ts):
-    days = (last_ts - started_ts) / 86_400_000
-    gross = (s.balance - s.capital)  # net already includes fees in balance
+def summary_line(s, j, last_ts, started_ts):
+    days = (last_ts - started_ts) / 86_400_000 if last_ts > started_ts else 0.0
     return (f"{days:.1f}d  trades {j.trades}  "
             f"entryFill {j.entry_fills}/{j.entry_arms} ({j.entry_fill_rate()*100:.0f}%)  "
             f"exitFill {j.exit_fills}/{j.exit_arms} ({j.exit_fill_rate()*100:.0f}%)  "
@@ -918,23 +917,44 @@ async def run_live(args):
     seed_indicators(ind, bars=SEED_BARS)
     j = Journal(events_path="RSI/data/rsi_paper_events.jsonl",
                 state_path="RSI/data/rsi_paper_state.json")
-    s = Strategy(ind, fs := FillSim(), j)
+    s = Strategy(ind, FillSim(), j)
     # NOTE: indicators always recomputed from fresh seed; only restore balance here
     prior = j.load_state()
     if prior:
         s.balance = prior.get("balance", s.balance)
-    feed = Feed(on_trade=s.on_trade, on_bar_close=s.on_bar_close)
-    asyncio.create_task(_summary_loop(s, j))
+
+    # exchange-time tracking + gap handling
+    clock = {"last_ts": 0, "started_ts": 0, "first": True}
+
+    def on_trade(price, ts):
+        if clock["first"]:
+            clock["started_ts"] = ts; clock["first"] = False
+        clock["last_ts"] = ts
+        s.on_trade(price, ts)
+
+    def on_bar_close(candle):
+        clock["last_ts"] = max(clock["last_ts"], int(candle["ts"]))
+        s.on_bar_close(candle)
+
+    first_connect = {"v": True}
+
+    def on_reconnect():
+        if first_connect["v"]:           # initial connect is not a gap
+            first_connect["v"] = False
+            return
+        seed_indicators(ind, bars=SEED_BARS)   # refresh indicators across the gap
+        if s.state != "FLAT" or s.fs.has("ENTRY"):
+            s.on_gap(clock["last_ts"])          # mark interrupted order indeterminate
+
+    feed = Feed(on_trade=on_trade, on_bar_close=on_bar_close, on_reconnect=on_reconnect)
+    asyncio.create_task(_summary_loop(s, j, clock))
     await feed.run()
 
 
-async def _summary_loop(s, j, interval=300):
-    import time as _t
-    started = int(_t.time() * 1000)
+async def _summary_loop(s, j, clock, interval=300):
     while True:
         await asyncio.sleep(interval)
-        now = int(_t.time() * 1000)
-        line = summary_line(s, j, started, now)
+        line = summary_line(s, j, clock["last_ts"], clock["started_ts"])
         logger.info(line)
         print(line, flush=True)
         j.save_state({"balance": s.balance,
