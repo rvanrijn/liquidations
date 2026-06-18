@@ -81,3 +81,16 @@ def test_gap_while_armed_marks_indeterminate():
     assert not fs.has("ENTRY")
     # arm that was interrupted is NOT counted as a miss
     assert j.entry_arms == 1 and j.entry_fills == 0
+
+
+def test_exit_reprice_counts_one_arm_opportunity():
+    s, ind, fs, j = _mk(_series_to(True))
+    s._force_arm(price=100.0, ts=0)
+    s.on_trade(price=100.0, ts=10_000)            # LONG @100
+    s._force_exit_arm(price=110.0, ts=20_000)     # first arm
+    s._force_exit_arm(price=109.0, ts=80_000)     # re-price (chase) — must NOT recount
+    s._force_exit_arm(price=108.0, ts=140_000)    # re-price again
+    assert j.exit_arms == 1                        # one opportunity, not three
+    assert fs.has("EXIT")                          # the latest exit limit is resting
+    s.on_trade(price=108.5, ts=150_000)           # fills the @108 limit
+    assert j.exit_fills == 1 and j.exit_fill_rate() == 1.0

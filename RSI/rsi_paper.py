@@ -209,13 +209,11 @@ class Strategy:
         self.state = "FLAT"
         self.position: Position | None = None
         self.balance = capital
-        self._arm_price = 0.0
         self._arm_placed_ts = 0
         self._exit_armed = False
 
     # ── test/internal hooks ──────────────────────────────────────────────
     def _force_arm(self, price, ts):
-        self._arm_price = price
         self._arm_placed_ts = ts
         self.fs.place(RestingOrder("BUY", price, "ENTRY", ts, ts + self.tif_sec * 1000))
         self.state = "ARMED_ENTRY"
@@ -224,8 +222,9 @@ class Strategy:
     def _force_exit_arm(self, price, ts):
         self.fs.cancel("EXIT")
         self.fs.place(RestingOrder("SELL", price, "EXIT", ts))
+        if not self._exit_armed:                      # count once per exit opportunity
+            self.j.record("EXIT_ARM", {"price": price, "ts": ts})
         self._exit_armed = True
-        self.j.record("EXIT_ARM", {"price": price, "ts": ts})
 
     # ── event handlers ───────────────────────────────────────────────────
     def on_bar_close(self, candle):
