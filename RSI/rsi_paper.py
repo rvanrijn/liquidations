@@ -423,8 +423,7 @@ async def _summary_loop(s, j, clock, interval=300):
     while True:
         await asyncio.sleep(interval)
         line = summary_line(s, j, clock["last_ts"], clock["started_ts"])
-        logger.info(line)
-        print(line, flush=True)
+        logger.info(line)   # single timestamped emit (basicConfig -> stderr)
         j.save_state({"balance": s.balance,
                       "position": s.position.__dict__ if s.position else None})
 
