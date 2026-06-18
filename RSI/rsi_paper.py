@@ -3,6 +3,20 @@
 
 Measures the real maker limit fill rate that OHLCV backtesting could not.
 See docs/superpowers/specs/2026-06-18-rsi-maker-paper-trader-design.md
+
+Usage:
+  python RSI/rsi_paper.py run              # live: connect to Binance, paper-trade
+  python RSI/rsi_paper.py replay --days 30 # offline smoke test over historical 1m
+
+Live mode writes to RSI/data/ (gitignored):
+  rsi_paper_events.jsonl  — every SIGNAL/ARM/FILL/MISS/STOP/GAP (raw record)
+  rsi_paper_state.json    — balance + open position (resume)
+
+The headline metrics are exitFill (TP fills / exit opportunities) and
+missedExit->stop (exits that round-tripped into the 2% stop) — the numbers the
+backtest could only assume. Let it run for weeks, then analyse the JSONL.
+Note: replay fills are a low/high proxy, NOT a fill-rate measurement — only the
+live trade stream can produce the real fill rate.
 """
 
 import argparse
