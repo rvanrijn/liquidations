@@ -36,5 +36,11 @@ htmlcov/
 # Data
 data/
 
+# SSH keys
+*.pem
+
 # Misc
 *.log
+RSI/data/rsi_paper_events.jsonl
+RSI/data/rsi_paper_state.json
+RSI/data/cache_*.json
