@@ -62,11 +62,15 @@ displays and what the indicator reads.
 
 ## 4. Data
 
-- **Source:** Bybit `BTCUSDT` perpetual, ~3 years, 8H bars.
+- **Source:** Bybit `BTCUSDT` perpetual is the **canonical, single source** — the cost model
+  (Section 3) is venue-representative, not Kraken-specific; do not reconcile a separate Kraken feed.
 - Resampled from finer granularity if the venue/ccxt only returns sub-8H cleanly; otherwise
   fetched natively. Cached to parquet so runs are reproducible and offline.
 - ~3 years deliberately spans bull + the 2022 bear + chop, mirroring the multi-regime
   discipline used in the FRVP V2 validation.
+- **Regime tagging:** the bull/bear/chop breakdown (Section 6) uses **fixed, documented date
+  ranges** declared once in config (not hand-picked per run), so the split is reproducible.
+  The plan pins the exact boundaries.
 
 ## 5. Components (Python package under `MCBstrat/`)
 
@@ -82,6 +86,10 @@ displays and what the indicator reads.
 | `tv_crosscheck.py` | TV MCP: load 8H BTC HA + VuManChu, compare Python wt1/wt2/MF-sign to TV plotted values across sample bars, report match rate | TV MCP |
 
 Each module has one clear purpose, a typed function interface, and is testable in isolation.
+
+**Note:** `tv_crosscheck.py` depends on a live TV MCP session and a manually-loaded VuManChu
+indicator, so it is a **manual, one-time validation step** (a DoD gate, Section 10) and is NOT
+wired into the automated test/run path. Mind known TV MCP symbol-drift and current-bar-only reads.
 
 ### Per-trade telemetry
 
@@ -134,3 +142,6 @@ Tests written before implementation:
 - TV cross-check executed and its match rate recorded in the report.
 - A clear verdict stated: edge present and cost-survivable, marginal, or absent — with the
   trade count and OOS behavior front and center.
+- **Minimum-N gate:** if either side's trade count falls below a documented threshold
+  (e.g. < 20 trades), the verdict for that side defaults to **"inconclusive / insufficient
+  power"** rather than "absent," so a near-zero-sample result is never misread as a tested negative.
