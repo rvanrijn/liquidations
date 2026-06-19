@@ -24,7 +24,12 @@ def _apply_slip(price: float, slip: float, is_buy: bool) -> float:
     return price * (1 + slip / 100.0) if is_buy else price * (1 - slip / 100.0)
 
 def run_backtest(df: pd.DataFrame, costs: CostModel):
-    """df needs raw open/high/low/close and an 'event' column. Returns (trades, equity_series)."""
+    """df needs raw open/high/low/close and an 'event' column. Returns (trades, equity_series).
+
+    Fill rule: an ENTER/EXIT event decided on closed bar i fills at bar i+1's raw open.
+    If an EXIT event lands on the last bar (no i+1), the position is force-closed at the
+    final bar's close after the loop -- never at the signal bar's own open (no lookahead).
+    """
     trades: list[Trade] = []
     opens = df["open"].to_numpy()
     highs = df["high"].to_numpy()
@@ -68,14 +73,9 @@ def run_backtest(df: pd.DataFrame, costs: CostModel):
         nxt = i + 1
         if not in_pos and ev in ("ENTER_LONG", "ENTER_SHORT") and nxt < n:
             open_trade(nxt, "LONG" if ev == "ENTER_LONG" else "SHORT")
-        elif in_pos and ev in ("EXIT_LONG", "EXIT_SHORT"):
-            if nxt < n:
-                close_trade(nxt, opens[nxt], times[nxt])
-            else:
-                # Exit signal on last bar: fill at last bar's open (no next bar exists)
-                close_trade(i, opens[i], times[i])
+        elif in_pos and ev in ("EXIT_LONG", "EXIT_SHORT") and nxt < n:
+            close_trade(nxt, opens[nxt], times[nxt])
     if in_pos:
-        # No exit signal before end-of-data: close at final bar's close
         close_trade(n - 1, closes[n - 1], times[n - 1])
 
     eq = [1.0]
