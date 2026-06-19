@@ -21,3 +21,21 @@ def test_wavetrend_matches_independent_reference():
 
     pd.testing.assert_series_equal(wt1.dropna(), ref1.dropna(), check_names=False)
     pd.testing.assert_series_equal(wt2.dropna(), ref2.dropna(), check_names=False)
+
+from mcbstrat.indicators import money_flow
+
+def test_money_flow_sign_follows_ha_body_direction():
+    n = 80
+    idx = pd.date_range("2024-01-01", periods=n, freq="8h", tz="UTC")
+    df = pd.DataFrame({
+        "ha_open":  [100.0] * n,
+        "ha_high":  [110.0] * n,
+        "ha_low":   [ 99.0] * n,
+        "ha_close": [109.0] * n,
+    }, index=idx)
+    mf = money_flow(df)
+    assert mf.iloc[-1] > 0
+    df2 = df.copy()
+    df2["ha_open"], df2["ha_close"] = 109.0, 100.0
+    mf2 = money_flow(df2)
+    assert mf2.iloc[-1] < 0

@@ -21,3 +21,13 @@ def wavetrend(src: pd.Series, n1: int = WT_CHANNEL_LEN, n2: int = WT_AVERAGE_LEN
     wt1 = ci.ewm(span=n2, adjust=False).mean()
     wt2 = wt1.rolling(ma).mean()
     return wt1, wt2
+
+def money_flow(df: pd.DataFrame, period: int = MFI_PERIOD, mult: float = MFI_MULTIPLIER) -> pd.Series:
+    """VuManChu MFI+RSI area on HA candles. >0 green, <0 red.
+
+    sma(((ha_close - ha_open) / (ha_high - ha_low)) * mult, period).
+    The RSI/Y-offset constants in VuManChu are display-only and do not change the sign.
+    """
+    rng = (df["ha_high"] - df["ha_low"]).replace(0, np.nan)
+    raw = ((df["ha_close"] - df["ha_open"]) / rng) * mult
+    return raw.rolling(period).mean()
