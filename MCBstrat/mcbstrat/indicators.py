@@ -31,3 +31,16 @@ def money_flow(df: pd.DataFrame, period: int = MFI_PERIOD, mult: float = MFI_MUL
     rng = (df["ha_high"] - df["ha_low"]).replace(0, np.nan)
     raw = ((df["ha_close"] - df["ha_open"]) / rng) * mult
     return raw.rolling(period).mean()
+
+def detect_dots(wt1: pd.Series, wt2: pd.Series, ob: float = OB_LEVEL, os_: float = OS_LEVEL):
+    """Return (green, red) boolean Series.
+
+    green: wt1 crosses ABOVE wt2 (prev wt1<=wt2, now wt1>wt2) AND wt2 <= os_.
+    red:   wt1 crosses BELOW wt2 (prev wt1>=wt2, now wt1<wt2) AND wt2 >= ob.
+    """
+    prev1, prev2 = wt1.shift(1), wt2.shift(1)
+    cross_up = (prev1 <= prev2) & (wt1 > wt2)
+    cross_down = (prev1 >= prev2) & (wt1 < wt2)
+    green = (cross_up & (wt2 <= os_)).fillna(False)
+    red = (cross_down & (wt2 >= ob)).fillna(False)
+    return green, red

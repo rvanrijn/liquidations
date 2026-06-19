@@ -39,3 +39,19 @@ def test_money_flow_sign_follows_ha_body_direction():
     df2["ha_open"], df2["ha_close"] = 109.0, 100.0
     mf2 = money_flow(df2)
     assert mf2.iloc[-1] < 0
+
+from mcbstrat.indicators import detect_dots
+
+def test_detect_dots_green_on_oversold_crossup_red_on_overbought_crossdown():
+    idx = pd.date_range("2024-01-01", periods=4, freq="8h", tz="UTC")
+    # bar0: wt1 below wt2 in oversold; bar1: wt1 crosses ABOVE wt2 still oversold -> GREEN
+    # bar1: prev wt1(-70) <= prev wt2(-55) AND now wt1(-56) > wt2(-58) => cross up ; wt2(-58) <= -53
+    wt1 = pd.Series([-70, -56, 20, 70], index=idx, dtype=float)
+    wt2 = pd.Series([-55, -58, 30, 55], index=idx, dtype=float)
+    green, red = detect_dots(wt1, wt2)
+    assert bool(green.iloc[1]) is True
+    assert bool(red.iloc[1]) is False
+    wt1b = pd.Series([10, 70, 65, 40], index=idx, dtype=float)
+    wt2b = pd.Series([20, 60, 66, 55], index=idx, dtype=float)
+    g2, r2 = detect_dots(wt1b, wt2b)
+    assert bool(r2.iloc[2]) is True
