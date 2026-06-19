@@ -1,6 +1,6 @@
 import pandas as pd
 from mcbstrat.backtest import Trade
-from mcbstrat.metrics import summarize, verdict_for_side, MIN_TRADES
+from mcbstrat.metrics import summarize, verdict_for_side, MIN_TRADES, tag_regime
 
 def _t(side, ret, t0, t1):
     return Trade(side, pd.Timestamp(t0, tz="UTC"), pd.Timestamp(t1, tz="UTC"), 100, 100*(1+ret), ret, 0.0, 0.0, 1)
@@ -23,3 +23,15 @@ def test_verdict_uses_expectancy_when_enough_trades():
     losers = [_t("SHORT", -0.02, f"2024-{m:02d}-01", f"2024-{m:02d}-02") for m in range(1, 13)] * 2
     assert len(losers) >= MIN_TRADES
     assert verdict_for_side(losers) == "negative edge"
+
+def test_tag_regime_halfopen_contiguous_windows_have_no_gap():
+    w = [
+        ("A", pd.Timestamp("2024-01-01", tz="UTC"), pd.Timestamp("2024-04-01", tz="UTC")),
+        ("B", pd.Timestamp("2024-04-01", tz="UTC"), pd.Timestamp("2024-11-01", tz="UTC")),
+    ]
+    # a non-midnight 8H bar on the last day of window A must still tag A (not UNTAGGED)
+    assert tag_regime(pd.Timestamp("2024-03-31 16:00", tz="UTC"), w) == "A"
+    # the boundary instant belongs to the NEXT window (half-open: hi is exclusive)
+    assert tag_regime(pd.Timestamp("2024-04-01 00:00", tz="UTC"), w) == "B"
+    # last day of B at a non-midnight bar still tags B
+    assert tag_regime(pd.Timestamp("2024-10-31 16:00", tz="UTC"), w) == "B"

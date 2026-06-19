@@ -49,6 +49,6 @@ def split_oos(trades, frac_in: float = 0.70):
 
 def tag_regime(ts: pd.Timestamp, windows: list[tuple[str, pd.Timestamp, pd.Timestamp]]) -> str:
     for name, lo, hi in windows:
-        if lo <= ts <= hi:
+        if lo <= ts < hi:
             return name
     return "UNTAGGED"

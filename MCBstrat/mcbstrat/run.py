@@ -31,14 +31,20 @@ def main():
     shorts = [t for t in trades if t.side == "SHORT"]
     ins, out = split_oos(trades)
     windows = [
-        ("BULL_23_24",  pd.Timestamp("2023-01-01", tz="UTC"), pd.Timestamp("2024-03-31", tz="UTC")),
-        ("CHOP_BEAR_24", pd.Timestamp("2024-04-01", tz="UTC"), pd.Timestamp("2024-10-31", tz="UTC")),
-        ("BULL2_25_26", pd.Timestamp("2024-11-01", tz="UTC"), pd.Timestamp("2030-01-01", tz="UTC")),
+        ("BULL_23_24",   pd.Timestamp("2023-01-01", tz="UTC"), pd.Timestamp("2024-04-01", tz="UTC")),
+        ("CHOP_BEAR_24", pd.Timestamp("2024-04-01", tz="UTC"), pd.Timestamp("2024-11-01", tz="UTC")),
+        ("BULL2_25_26",  pd.Timestamp("2024-11-01", tz="UTC"), pd.Timestamp("2030-01-01", tz="UTC")),
     ]
     regimes = {}
     for name, lo, hi in windows:
         rt = [t for t in trades if tag_regime(t.entry_time, windows) == name]
         regimes[name] = summarize(rt)
+
+    tagged_total = sum(r["n"] for r in regimes.values())
+    assert tagged_total == len(trades), (
+        f"regime tagging dropped {len(trades) - tagged_total} trades "
+        f"(tagged {tagged_total} of {len(trades)}) — windows have a gap"
+    )
 
     payload = {
         "symbol": "BTCUSDT", "bars": len(raw),
