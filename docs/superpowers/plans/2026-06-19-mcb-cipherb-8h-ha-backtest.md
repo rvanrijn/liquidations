@@ -14,10 +14,10 @@
 
 ## Conventions for the implementer (read first)
 
-- All paths are relative to the repo root `/Users/rvanrijn/Developer/test/liquidations`.
-- Python interpreter: `.venv/bin/python`. Run tests with `.venv/bin/python -m pytest`.
+- Work happens in the git worktree at `~/.config/superpowers/worktrees/liquidations/mcb-cipherb-backtest` on branch `feature/mcb-cipherb-backtest`. All `MCBstrat/...` paths are relative to that worktree root.
+- **Python interpreter:** the worktree has no `.venv`; use the repo's shared venv by ABSOLUTE path: `/Users/rvanrijn/Developer/test/liquidations/.venv/bin/python` (has pandas 3.0, numpy 2.4, httpx 0.28, pytest 9.0). There is **no parquet engine** installed — caching uses pickle, not parquet (do not add pyarrow).
 - The package lives at `MCBstrat/mcbstrat/`; tests at `MCBstrat/tests/`. A `MCBstrat/pytest.ini` sets the rootdir and adds `MCBstrat` to the path so imports are `from mcbstrat.X import ...`.
-- Run pytest as: `cd MCBstrat && ../.venv/bin/python -m pytest -v` (the `pytest.ini` `pythonpath` makes `mcbstrat` importable).
+- Run pytest as: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest -v` (the `pytest.ini` `pythonpath` makes `mcbstrat` importable).
 - **Pine→pandas equivalences (use these exactly):**
   - Pine `ema(x, n)` == `x.ewm(span=n, adjust=False).mean()`
   - Pine `sma(x, n)` == `x.rolling(n).mean()`
@@ -55,7 +55,7 @@ reports/
 
 - [ ] **Step 2: Verify pytest collects nothing yet (clean baseline)**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest -v`
 Expected: `no tests ran` (exit code 5), no import/config errors.
 
 - [ ] **Step 3: Commit**
@@ -69,7 +69,7 @@ git commit -m "chore(mcbstrat): scaffold package + pytest config"
 
 ## Task 1: Data — fetch Bybit BTCUSDT and resample to 8H
 
-Bybit linear perps have no native 8H interval, so fetch native 60-minute klines from Bybit's public v5 REST (`/v5/market/kline`, `category=linear`, `symbol=BTCUSDT`, `interval=60`), paginate backward ~3 years, then resample to 8H bars aligned to 00:00 UTC. Cache to parquet.
+Bybit linear perps have no native 8H interval, so fetch native 60-minute klines from Bybit's public v5 REST (`/v5/market/kline`, `category=linear`, `symbol=BTCUSDT`, `interval=60`), paginate backward ~3 years, then resample to 8H bars aligned to 00:00 UTC. Cache to pickle.
 
 **Files:**
 - Create: `MCBstrat/mcbstrat/data.py`
@@ -109,14 +109,14 @@ def test_resample_to_8h_aligns_to_utc_origin_and_aggregates_ohlcv():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_data.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_data.py -v`
 Expected: FAIL — `ImportError: cannot import name 'resample_to_8h'`.
 
 - [ ] **Step 3: Implement `resample_to_8h` and the fetcher**
 
 ```python
 # MCBstrat/mcbstrat/data.py
-"""Fetch Bybit BTCUSDT 1h klines and resample to 8H bars (UTC-origin), with parquet cache."""
+"""Fetch Bybit BTCUSDT 1h klines and resample to 8H bars (UTC-origin), with pickle cache."""
 from __future__ import annotations
 import time
 from pathlib import Path
@@ -167,34 +167,38 @@ def _fetch_1h_bybit(symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "volume"]]
 
 def load_btc_8h(years: float = 3.0, symbol: str = "BTCUSDT", refresh: bool = False) -> pd.DataFrame:
-    """Return ~`years` of 8H BTCUSDT bars, cached to parquet under data_cache/."""
+    """Return ~`years` of 8H BTCUSDT bars, cached to pickle under data_cache/.
+
+    Pickle (not parquet) keeps the tz-aware DatetimeIndex + float dtypes lossless with
+    no extra dependency (the shared venv has no parquet engine).
+    """
     CACHE_DIR.mkdir(exist_ok=True)
-    cache = CACHE_DIR / f"{symbol}_8h_{years}y.parquet"
+    cache = CACHE_DIR / f"{symbol}_8h_{years}y.pkl"
     if cache.exists() and not refresh:
-        return pd.read_parquet(cache)
+        return pd.read_pickle(cache)
     end_ms = int(time.time() * 1000)
     start_ms = end_ms - int(years * 365 * 24 * 60 * 60 * 1000)
     df_1h = _fetch_1h_bybit(symbol, start_ms, end_ms)
     df_8h = resample_to_8h(df_1h)
-    df_8h.to_parquet(cache)
+    df_8h.to_pickle(cache)
     return df_8h
 ```
 
 - [ ] **Step 4: Run the resample test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_data.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_data.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Smoke-test the live fetch once (manual, network)**
 
-Run: `cd MCBstrat && ../.venv/bin/python -c "from mcbstrat.data import load_btc_8h; d=load_btc_8h(); print(d.shape); print(d.head(2)); print(d.tail(2))"`
-Expected: ~3200+ rows (3yr × ~1095 8H bars), index at 00:00/08:00/16:00 UTC, sane BTC prices. The parquet cache now exists.
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -c "from mcbstrat.data import load_btc_8h; d=load_btc_8h(); print(d.shape); print(d.head(2)); print(d.tail(2))"`
+Expected: ~3200+ rows (3yr × ~1095 8H bars), index at 00:00/08:00/16:00 UTC, sane BTC prices. The pickle cache now exists.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add MCBstrat/mcbstrat/data.py MCBstrat/tests/test_data.py
-git commit -m "feat(mcbstrat): Bybit 1h fetch + 8H UTC-origin resample with parquet cache"
+git commit -m "feat(mcbstrat): Bybit 1h fetch + 8H UTC-origin resample with pickle cache"
 ```
 
 ---
@@ -241,7 +245,7 @@ def test_heikin_ashi_first_two_bars_hand_computed():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_heikin_ashi.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_heikin_ashi.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement**
@@ -272,7 +276,7 @@ def add_heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_heikin_ashi.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_heikin_ashi.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -324,7 +328,7 @@ def test_wavetrend_matches_independent_reference():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `wavetrend` (and `hlc3` helper)**
@@ -358,7 +362,7 @@ def wavetrend(src: pd.Series, n1: int = WT_CHANNEL_LEN, n2: int = WT_AVERAGE_LEN
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -405,7 +409,7 @@ def test_money_flow_sign_follows_ha_body_direction():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py::test_money_flow_sign_follows_ha_body_direction -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py::test_money_flow_sign_follows_ha_body_direction -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `money_flow`**
@@ -425,7 +429,7 @@ def money_flow(df: pd.DataFrame, period: int = MFI_PERIOD, mult: float = MFI_MUL
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py -v`
 Expected: PASS (all indicator tests).
 
 - [ ] **Step 5: Commit**
@@ -469,7 +473,7 @@ def test_detect_dots_green_on_oversold_crossup_red_on_overbought_crossdown():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py::test_detect_dots_green_on_oversold_crossup_red_on_overbought_crossdown -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py::test_detect_dots_green_on_oversold_crossup_red_on_overbought_crossdown -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `detect_dots`**
@@ -492,7 +496,7 @@ def detect_dots(wt1: pd.Series, wt2: pd.Series, ob: float = OB_LEVEL, os_: float
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_indicators.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_indicators.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -554,7 +558,7 @@ def test_no_entry_when_dot_and_mf_disagree():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_signals.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_signals.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `build_signals`**
@@ -595,7 +599,7 @@ def build_signals(df: pd.DataFrame) -> pd.DataFrame:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_signals.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_signals.py -v`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
@@ -667,7 +671,7 @@ def test_open_position_closed_at_final_bar_close():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_backtest.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_backtest.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement the engine**
@@ -759,7 +763,7 @@ def run_backtest(df: pd.DataFrame, costs: CostModel):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_backtest.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_backtest.py -v`
 Expected: PASS (3 tests, including the no-lookahead guard).
 
 - [ ] **Step 5: Commit**
@@ -816,7 +820,7 @@ def test_verdict_uses_expectancy_when_enough_trades():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_metrics.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_metrics.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `metrics.py`**
@@ -881,7 +885,7 @@ def tag_regime(ts: pd.Timestamp, windows: list[tuple[str, pd.Timestamp, pd.Times
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_metrics.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_metrics.py -v`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
@@ -929,7 +933,7 @@ def test_report_contains_required_sections():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_report.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_report.py -v`
 Expected: FAIL — import error.
 
 - [ ] **Step 3: Implement `report.py` then `run.py`**
@@ -1036,12 +1040,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run the report test to verify it passes**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest tests/test_report.py -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest tests/test_report.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Run the full suite**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m pytest -v`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m pytest -v`
 Expected: PASS (all tests across all modules).
 
 - [ ] **Step 6: Commit**
@@ -1093,7 +1097,7 @@ def compare(py_rows: list[dict], tv_rows: list[dict]) -> dict:
 
 - [ ] **Step 2: Quick sanity check the pure helper imports**
 
-Run: `cd MCBstrat && ../.venv/bin/python -c "from mcbstrat.tv_crosscheck import compare; print(compare([{'wt_sign':1,'dot':'G','mf_sign':1}],[{'wt_sign':1,'dot':'G','mf_sign':1}]))"`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -c "from mcbstrat.tv_crosscheck import compare; print(compare([{'wt_sign':1,'dot':'G','mf_sign':1}],[{'wt_sign':1,'dot':'G','mf_sign':1}]))"`
 Expected: `{'wt_match': 1.0, 'dot_match': 1.0, 'mf_match': 1.0}`
 
 - [ ] **Step 3: Commit**
@@ -1113,7 +1117,7 @@ git commit -m "feat(mcbstrat): manual TV MCP cross-check helper + procedure"
 
 - [ ] **Step 1: Run the full backtest end-to-end (network: fetches/caches data)**
 
-Run: `cd MCBstrat && ../.venv/bin/python -m mcbstrat.run`
+Run: `cd MCBstrat && /Users/rvanrijn/Developer/test/liquidations/.venv/bin/python -m mcbstrat.run`
 Expected: prints the report and writes `MCBstrat/reports/mcb_cipherb_8h_backtest.md`. Sanity-check: trade count is non-zero; long count is plausibly small (the expected-sparse case); numbers are finite.
 
 - [ ] **Step 2: Execute the TV cross-check (manual, TradingView MCP)**
