@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Liqhunt Cascade Radar</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <span id="price">BTC —</span>
+      <span id="verdict" class="standby">STANDBY</span>
+    </header>
+    <main>
+      <svg id="field"></svg>
+      <aside id="rail">
+        <div class="gauge" id="quality">QUALITY <b>—</b></div>
+        <div class="stat" id="oi">OI Δ <b>—</b></div>
+        <div class="stat" id="oivel">OI vel (%/min) <b>—</b></div>
+        <div class="stat" id="cvd">CVD 30m <b>—</b></div>
+        <div class="stat" id="funding">Funding <b>—</b></div>
+        <div class="stat" id="imbalance">Imbalance <b>—</b></div>
+        <div class="stat" id="taker">Taker <b>—</b></div>
+        <div id="conns"><span id="c-liq">● liq</span> <span id="c-trade">● trade</span></div>
+      </aside>
+    </main>
+    <svg id="intensity"></svg>
+  </div>
+  <script src="/static/radar.js"></script>
+</body>
+</html>
