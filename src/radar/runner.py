@@ -140,7 +140,12 @@ class RadarRunner:
                 await client._ensure_session()
                 candles = await candle_fetcher.fetch(client.session)
                 _, _, cvd_1m = btc_flow.totals()
-                taker_ratio = await client.get_taker_ratio("BTC") or 1.0
+                # taker_ratio is an optional regime input; older engine builds
+                # lack get_taker_ratio. Degrade to the neutral 1.0 the engine defaults.
+                taker_ratio = 1.0
+                _get_taker = getattr(client, "get_taker_ratio", None)
+                if _get_taker is not None:
+                    taker_ratio = await _get_taker("BTC") or 1.0
                 liq_long_usd, liq_short_usd, _ = liq_feed.totals()
                 market = SimpleNamespace(
                     price=price,
@@ -149,7 +154,7 @@ class RadarRunner:
                     avg_range=candle_fetcher.avg_range,
                     liq_levels_long=[(l.price, l.estimated_usd) for l in btc.longs_at_risk] if btc else [],
                     liq_levels_short=[(l.price, l.estimated_usd) for l in btc.shorts_at_risk] if btc else [],
-                    funding=btc.funding_rate if btc else 0.0,
+                    funding=getattr(btc, "funding_rate", 0.0) if btc else 0.0,
                     taker_ratio=taker_ratio,
                     liq_long_usd=liq_long_usd,
                     liq_short_usd=liq_short_usd,
