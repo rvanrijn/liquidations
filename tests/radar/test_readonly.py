@@ -12,6 +12,10 @@ FORBIDDEN = [
     ".execute(",   # no direct DB writes
     "INSERT ",
     "UPDATE ",
+    "MagnetDatabase",
+    "MagnetMonitor",
+    "log_battle",
+    "export_battles_json",
 ]
 
 
