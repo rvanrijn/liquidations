@@ -106,3 +106,30 @@ def test_build_snapshot_derives_side_and_imbalance_no_db():
     assert snap.bigger_side == "LONG"
     assert snap.imbalance_ratio == 4.0
     assert snap.btc_price == 61500.0
+
+
+def test_apply_dev_overrides_clears_day_filter():
+    import src.liqhunt.signal_engine as se
+    from src.radar.runner import apply_dev_overrides
+    orig = se.SKIP_DAYS
+    try:
+        apply_dev_overrides(True)
+        assert se.SKIP_DAYS == set()
+    finally:
+        se.SKIP_DAYS = orig
+
+
+def test_apply_dev_overrides_noop_when_false():
+    import src.liqhunt.signal_engine as se
+    from src.radar.runner import apply_dev_overrides
+    orig = se.SKIP_DAYS
+    apply_dev_overrides(False)
+    assert se.SKIP_DAYS == orig
+
+
+def test_runner_ignore_day_filter_param_overrides_env():
+    from src.radar.runner import RadarRunner
+    r = RadarRunner(engine=object(), ignore_day_filter=True)
+    assert r.ignore_day_filter is True
+    r2 = RadarRunner(engine=object(), ignore_day_filter=False)
+    assert r2.ignore_day_filter is False

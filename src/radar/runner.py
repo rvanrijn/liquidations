@@ -5,6 +5,7 @@ Imports NO trader or trading-module and performs NO DB writes (see test_readonly
 
 import asyncio
 import logging
+import os
 from collections import deque
 from time import time as _time
 from typing import Callable, Optional
@@ -17,6 +18,25 @@ from src.radar.state import RadarState, liq_message
 logger = logging.getLogger(__name__)
 
 POLL_SEC = 10  # match the bot's ~10s cycle cadence
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def apply_dev_overrides(ignore_day_filter: bool) -> None:
+    """Dev/test only: relax engine gates for visualization.
+
+    Mutates the SignalEngine module's in-memory SKIP_DAYS global for THIS process
+    only — it does not edit engine source and does not affect the real bot (a
+    separate process). Lets the radar render the full evaluation pipeline (and
+    ARMED states) on days the bot would normally skip, e.g. Saturday.
+    """
+    if not ignore_day_filter:
+        return
+    import src.liqhunt.signal_engine as se
+    se.SKIP_DAYS = set()
+    logger.warning("RADAR dev override: day filter DISABLED (visualization/test only)")
 
 
 def build_snapshot(btc, now: float):
@@ -36,12 +56,15 @@ def build_snapshot(btc, now: float):
 
 
 class RadarRunner:
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, ignore_day_filter: Optional[bool] = None):
         # Lazy import so unit tests can inject a fake engine without network deps.
         if engine is None:
             from src.liqhunt.signal_engine import SignalEngine
             engine = SignalEngine()
         self.engine = engine
+        if ignore_day_filter is None:
+            ignore_day_filter = _env_truthy("RADAR_IGNORE_DAY_FILTER")
+        self.ignore_day_filter = ignore_day_filter
         self.oi_history: deque = deque(maxlen=60)
         self.cvd_history: deque = deque(maxlen=30)
         self.price_history: deque = deque(maxlen=2200)  # (ts, price)
@@ -102,6 +125,7 @@ class RadarRunner:
 
     async def run(self) -> None:
         """Wire real feeds and loop forever. Read-only."""
+        apply_dev_overrides(self.ignore_day_filter)
         from types import SimpleNamespace
 
         from src.liqhunt.candles import CandleFetcher
