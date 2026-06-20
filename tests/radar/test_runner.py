@@ -1,6 +1,7 @@
 from collections import deque
 from types import SimpleNamespace
 
+from src.liqhunt.models import Candle, Signal, SweepResult
 from src.liqlevels.models import LiqSnapshot
 from src.radar.runner import RadarRunner
 
@@ -56,9 +57,27 @@ def test_build_once_accumulates_oi_and_cvd_history():
     assert state.imbalance == snap.imbalance_ratio
 
 
-def test_build_once_is_read_only_no_exceptions_on_repeat():
+def test_build_once_stable_under_repeated_calls_with_constant_oi():
     r = RadarRunner(engine=_FakeEngine())
     for i in range(15):
         st = r.build_once(_market(), now=1000.0 + i * 10)
     # after 12+ samples oi_velocity is computable (still 0 here, constant OI)
     assert st.oi_velocity == 0.0
+
+
+def test_build_once_surfaces_signal_quality_score_when_armed():
+    """Fix 1: quality must come from signal.quality_score, not market.quality."""
+    sweep = SweepResult(valid=True, candle=Candle(1, 2, 0, 1, 10, 0),
+                        extreme=60000.0, direction="DOWN")
+    sig = Signal(direction="LONG", entry_price=61000.0, stop_price=60500.0,
+                 risk_pct=0.01, primary_target=62000.0, secondary_target=62500.0,
+                 reasoning="sweep", magnet_side="LONG", imbalance_ratio=1.5,
+                 sweep=sweep, quality_score=0.7)
+
+    r = RadarRunner(engine=_FakeEngine(signal=sig, reason=""))
+    snap = LiqSnapshot(btc_price=61500.0, total_long_usd=2.0,
+                       total_short_usd=1.0, timestamp=1.0)
+    state = r.build_once(_market(snapshot=snap), now=1000.0)
+
+    assert state.verdict == "ARMED"
+    assert state.quality == 0.7

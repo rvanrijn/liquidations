@@ -27,7 +27,7 @@ class RadarRunner:
         self.engine = engine
         self.oi_history: deque = deque(maxlen=60)
         self.cvd_history: deque = deque(maxlen=30)
-        self.price_history: deque = deque()  # (ts, price)
+        self.price_history: deque = deque(maxlen=2200)  # (ts, price)
         self.state: Optional[RadarState] = None
         self.on_liq: Optional[Callable[[dict], None]] = None
 
@@ -62,6 +62,7 @@ class RadarRunner:
             cvd_30m=cvd_30m,
         )
 
+        quality = signal.quality_score if signal is not None else 0.0
         self.state = build_state(
             snapshot=market.snapshot,
             signal=signal,
@@ -72,7 +73,7 @@ class RadarRunner:
             cvd_30m=cvd_30m,
             funding=market.funding,
             taker_ratio=market.taker_ratio,
-            quality=market.quality,
+            quality=quality,
             range_6h=range_6h,
             liq_levels_long=market.liq_levels_long,
             liq_levels_short=market.liq_levels_short,
@@ -139,18 +140,14 @@ class RadarRunner:
                     liq_levels_short=[(l.price, l.estimated_usd) for l in btc.shorts_at_risk] if btc else [],
                     funding=btc.funding_rate if btc else 0.0,
                     taker_ratio=taker_ratio,
-                    quality=0.0,  # quality_score is set on the Signal when armed
                     liq_long_usd=liq_long_usd,
                     liq_short_usd=liq_short_usd,
                     oi_usd=btc.open_interest_usd if btc else 0.0,
                     cvd_1m=cvd_1m,
                     connections={"liq_feed": liq_feed.connected,
-                                 "trade_feed": getattr(btc_ws, "connected", True)},
+                                 "trade_feed": getattr(btc_ws, "connected", False)},
                 )
-                state = self.build_once(market, now=_time())
-                # quality on the rail = the armed signal's quality_score if any
-                if state.signal is None:
-                    state.quality = 0.0
+                self.build_once(market, now=_time())
             except Exception:
                 logger.exception("radar cycle failed; continuing")
             await asyncio.sleep(POLL_SEC)
@@ -164,10 +161,10 @@ class RadarRunner:
                 params={"symbol": "BTCUSDT", "interval": "5m", "limit": 72},
             ) as resp:
                 if resp.status == 200:
-                    now = _time()
                     for k in await resp.json():
-                        self.price_history.append((now, float(k[2])))
-                        self.price_history.append((now, float(k[3])))
+                        ts = float(k[0]) / 1000.0
+                        self.price_history.append((ts, float(k[2])))
+                        self.price_history.append((ts, float(k[3])))
             async with client.session.get(
                 "https://fapi.binance.com/futures/data/openInterestHist",
                 params={"symbol": "BTCUSDT", "period": "5m", "limit": 3},
