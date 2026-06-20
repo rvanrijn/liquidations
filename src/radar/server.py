@@ -20,7 +20,7 @@ class ConnectionManager:
         self._clients: set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def bind_loop(self, loop):
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
     async def connect(self, ws: WebSocket):
@@ -48,6 +48,7 @@ class ConnectionManager:
     def broadcast_sync(self, message: dict):
         """Thread/callback-safe entry from the runner's on_liq callback."""
         if self._loop is None:
+            logger.debug("broadcast_sync: loop not bound, dropping %s", message.get("type"))
             return
         asyncio.run_coroutine_threadsafe(self.broadcast(message), self._loop)
 
@@ -64,7 +65,10 @@ def make_app(runner: RadarRunner, start_loop: bool = True) -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        page = STATIC_DIR / "index.html"
+        if not page.exists():
+            return {"detail": "UI not deployed"}
+        return FileResponse(page)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
@@ -87,8 +91,10 @@ def make_app(runner: RadarRunner, start_loop: bool = True) -> FastAPI:
         manager.bind_loop(asyncio.get_running_loop())
         runner.on_liq = manager.broadcast_sync
         if start_loop:
-            asyncio.create_task(runner.run())
-            asyncio.create_task(_state_broadcast_loop())
+            app.state.tasks = [
+                asyncio.create_task(runner.run()),
+                asyncio.create_task(_state_broadcast_loop()),
+            ]
 
     async def _state_broadcast_loop():
         while True:
