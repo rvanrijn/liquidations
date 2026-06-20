@@ -10,24 +10,53 @@
 <body>
   <div id="app">
     <header id="topbar">
-      <span id="price">BTC —</span>
-      <span id="verdict" class="standby">STANDBY</span>
+      <div class="left">
+        <span id="price">BTC —</span>
+        <span id="chg" class="chg"></span>
+      </div>
+      <div class="center">
+        <span id="verdict" class="standby">STANDBY</span>
+      </div>
+      <div class="right">
+        <span id="devbadge" class="hidden">⚙ DEV · day&nbsp;filter&nbsp;off</span>
+        <span id="clock" class="clock">—</span>
+      </div>
     </header>
+
     <main>
       <svg id="field"></svg>
       <aside id="rail">
-        <div class="gauge" id="quality">QUALITY <b>—</b></div>
-        <div class="stat" id="oi">OI Δ <b>—</b></div>
-        <div class="stat" id="oivel">OI vel (%/min) <b>—</b></div>
-        <div class="stat" id="cvd">CVD 30m <b>—</b></div>
-        <div class="stat" id="funding">Funding <b>—</b></div>
-        <div class="stat" id="imbalance">Imbalance <b>—</b></div>
-        <div class="stat" id="taker">Taker <b>—</b></div>
-        <div id="conns"><span id="c-liq">● liq</span> <span id="c-trade">● trade</span></div>
+        <div class="qwrap">
+          <svg id="qgauge" viewBox="0 0 132 132" aria-label="quality"></svg>
+          <div class="qcaption">QUALITY</div>
+        </div>
+
+        <div class="stat" id="oi"><span>OI Δ</span><b>—</b></div>
+        <div class="stat" id="oivel"><span>OI vel %/min</span><b>—</b></div>
+        <div class="stat" id="cvd"><span>CVD 30m</span><b>—</b></div>
+        <div class="stat" id="funding"><span>Funding</span><b>—</b></div>
+        <div class="stat" id="taker"><span>Taker</span><b>—</b></div>
+
+        <div id="imbwrap">
+          <div class="imb-head"><span>IMBALANCE</span><b id="imb-val">—</b></div>
+          <div class="imb-bar">
+            <div id="imb-long"></div>
+            <div id="imb-short"></div>
+          </div>
+          <div class="imb-legend"><span class="lg-long">long</span><span class="lg-short">short</span></div>
+        </div>
+
+        <div id="conns">
+          <span id="c-liq" class="conn"><i></i>liq feed</span>
+          <span id="c-trade" class="conn"><i></i>trade feed</span>
+        </div>
       </aside>
     </main>
+
     <svg id="intensity"></svg>
+    <div id="hint">SPACE&nbsp;freeze&nbsp;·&nbsp;liquidation&nbsp;cascade&nbsp;radar</div>
   </div>
+  <div id="tooltip" class="hidden"></div>
   <script src="/static/radar.js"></script>
 </body>
 </html>

@@ -21,6 +21,7 @@ class RadarState:
     rejection_reason: str
     signal: Optional[dict]              # {direction, entry, stop, target} or None
     connections: dict                   # {"liq_feed": bool, "trade_feed": bool}
+    dev_mode: bool = False              # True when engine gates relaxed for testing
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +44,7 @@ class RadarState:
             "rejection_reason": self.rejection_reason,
             "signal": self.signal,
             "connections": self.connections,
+            "dev_mode": self.dev_mode,
         }
 
 

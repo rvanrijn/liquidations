@@ -119,6 +119,7 @@ class RadarRunner:
             liq_levels_short=market.liq_levels_short,
             connections=market.connections,
         )
+        self.state.dev_mode = self.ignore_day_filter
         return self.state
 
     # ---- live wiring (exercised manually / smoke-tested, not in unit tests) ----
