@@ -1,6 +1,6 @@
 """RadarRunner — read-only orchestration of the engine's live perception.
 
-Imports NO trader/executor module and performs NO DB writes (see test_readonly).
+Imports NO trader or trading-module and performs NO DB writes (see test_readonly).
 """
 
 import asyncio
