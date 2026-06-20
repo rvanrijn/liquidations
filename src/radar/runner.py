@@ -9,6 +9,7 @@ from collections import deque
 from time import time as _time
 from typing import Callable, Optional
 
+from src.liqlevels.models import LiqSnapshot
 from src.radar import compute
 from src.radar.builder import build_state
 from src.radar.state import RadarState, liq_message
@@ -16,6 +17,22 @@ from src.radar.state import RadarState, liq_message
 logger = logging.getLogger(__name__)
 
 POLL_SEC = 10  # match the bot's ~10s cycle cadence
+
+
+def build_snapshot(btc, now: float):
+    """Build a fresh read-only LiqSnapshot from current liq data. No DB, no monitor."""
+    if btc is None:
+        return None
+    total_long = sum(l.estimated_usd for l in btc.longs_at_risk)
+    total_short = sum(l.estimated_usd for l in btc.shorts_at_risk)
+    if total_long <= 0 and total_short <= 0:
+        return None
+    return LiqSnapshot(
+        btc_price=btc.current_price,
+        total_long_usd=total_long,
+        total_short_usd=total_short,
+        timestamp=now,
+    )
 
 
 class RadarRunner:
@@ -89,16 +106,11 @@ class RadarRunner:
 
         from src.liqhunt.candles import CandleFetcher
         from src.liqlevels.client import BinanceLiqClient
-        from src.liqlevels.database import MagnetDatabase
-        from src.liqlevels.monitor import MagnetMonitor
         from src.orderflow.aggregator import OrderFlowAggregator
         from src.orderflow.clients.binance import BinanceTradeClient
         from src.radar.feeds import RadarLiqFeed
 
         client = BinanceLiqClient()
-        # MagnetDatabase is opened read-only for snapshot/levels derivation only.
-        magnet_db = MagnetDatabase()
-        monitor = MagnetMonitor(magnet_db)
         candle_fetcher = CandleFetcher()
         btc_flow = OrderFlowAggregator(window_minutes=1)
 
@@ -124,8 +136,7 @@ class RadarRunner:
                 data = await client.get_all_coins(["BTC", "ETH", "SOL"])
                 btc = data.get("BTC")
                 price = btc.current_price if btc else 0.0
-                if btc:
-                    monitor.update(btc, obv_macd_hist=candle_fetcher.obv_macd_histogram)
+                now = _time()
                 await client._ensure_session()
                 candles = await candle_fetcher.fetch(client.session)
                 _, _, cvd_1m = btc_flow.totals()
@@ -133,7 +144,7 @@ class RadarRunner:
                 liq_long_usd, liq_short_usd, _ = liq_feed.totals()
                 market = SimpleNamespace(
                     price=price,
-                    snapshot=monitor.snapshot,
+                    snapshot=build_snapshot(btc, now),
                     candles=candles,
                     avg_range=candle_fetcher.avg_range,
                     liq_levels_long=[(l.price, l.estimated_usd) for l in btc.longs_at_risk] if btc else [],
@@ -147,7 +158,7 @@ class RadarRunner:
                     connections={"liq_feed": liq_feed.connected,
                                  "trade_feed": getattr(btc_ws, "connected", False)},
                 )
-                self.build_once(market, now=_time())
+                self.build_once(market, now=now)
             except Exception:
                 logger.exception("radar cycle failed; continuing")
             await asyncio.sleep(POLL_SEC)

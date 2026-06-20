@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from src.liqhunt.models import Candle, Signal, SweepResult
 from src.liqlevels.models import LiqSnapshot
-from src.radar.runner import RadarRunner
+from src.radar.runner import RadarRunner, build_snapshot
 
 
 class _FakeEngine:
@@ -81,3 +81,28 @@ def test_build_once_surfaces_signal_quality_score_when_armed():
 
     assert state.verdict == "ARMED"
     assert state.quality == 0.7
+
+
+def _lvl(usd):
+    return SimpleNamespace(price=0.0, estimated_usd=usd)
+
+
+def test_build_snapshot_none_without_btc():
+    assert build_snapshot(None, 1.0) is None
+
+
+def test_build_snapshot_none_without_liq():
+    btc = SimpleNamespace(current_price=61500.0, longs_at_risk=[], shorts_at_risk=[])
+    assert build_snapshot(btc, 1.0) is None
+
+
+def test_build_snapshot_derives_side_and_imbalance_no_db():
+    btc = SimpleNamespace(current_price=61500.0,
+                          longs_at_risk=[_lvl(2.0), _lvl(2.0)],
+                          shorts_at_risk=[_lvl(1.0)])
+    snap = build_snapshot(btc, 123.0)
+    assert snap.total_long_usd == 4.0
+    assert snap.total_short_usd == 1.0
+    assert snap.bigger_side == "LONG"
+    assert snap.imbalance_ratio == 4.0
+    assert snap.btc_price == 61500.0
