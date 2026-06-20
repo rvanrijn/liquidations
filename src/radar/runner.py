@@ -55,6 +55,24 @@ def build_snapshot(btc, now: float):
     )
 
 
+def _live_quality(snapshot, oi_delta, oi_vel, range_6h, funding, taker_ratio) -> float:
+    """The engine's pure quality score for the current state, gates aside.
+
+    Lets the radar show a live 0..1 quality even while STANDBY (the engine only
+    attaches a score to an armed Signal). Same function the engine uses.
+    """
+    from src.liqhunt.quality import compute_quality_score
+    return compute_quality_score(
+        oi_change_pct=oi_delta,
+        imbalance_ratio=snapshot.imbalance_ratio,
+        funding_rate=funding,
+        price_range_6h=range_6h,
+        oi_velocity=oi_vel,
+        taker_ratio=taker_ratio,
+        magnet_side=snapshot.bigger_side,
+    )
+
+
 class RadarRunner:
     def __init__(self, engine=None, ignore_day_filter: Optional[bool] = None):
         # Lazy import so unit tests can inject a fake engine without network deps.
@@ -102,7 +120,15 @@ class RadarRunner:
             cvd_30m=cvd_30m,
         )
 
-        quality = signal.quality_score if signal is not None else 0.0
+        # Live quality every cycle (not only when armed): the same pure score the
+        # engine assigns, so the gauge is meaningful in STANDBY too.
+        if signal is not None:
+            quality = signal.quality_score
+        elif market.snapshot is not None:
+            quality = _live_quality(market.snapshot, oi_delta, oi_vel, range_6h,
+                                    market.funding, market.taker_ratio)
+        else:
+            quality = 0.0
         self.state = build_state(
             snapshot=market.snapshot,
             signal=signal,

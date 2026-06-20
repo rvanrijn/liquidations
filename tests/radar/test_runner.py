@@ -133,3 +133,25 @@ def test_runner_ignore_day_filter_param_overrides_env():
     assert r.ignore_day_filter is True
     r2 = RadarRunner(engine=object(), ignore_day_filter=False)
     assert r2.ignore_day_filter is False
+
+
+def test_live_quality_nonzero_for_strong_state():
+    from src.radar.runner import _live_quality
+    from src.liqlevels.models import LiqSnapshot
+    snap = LiqSnapshot(btc_price=61500.0, total_long_usd=4.0,
+                       total_short_usd=1.0, timestamp=1.0)
+    q = _live_quality(snap, oi_delta=-1.0, oi_vel=-0.2, range_6h=3000.0,
+                      funding=0.001, taker_ratio=1.2)
+    assert 0.0 < q <= 1.0
+
+
+def test_build_once_shows_live_quality_in_standby():
+    from src.liqlevels.models import LiqSnapshot
+    r = RadarRunner(engine=_FakeEngine(signal=None, reason="no sweep"))
+    snap = LiqSnapshot(btc_price=61500.0, total_long_usd=4.0,
+                       total_short_usd=1.0, timestamp=1.0)
+    r.build_once(_market(snapshot=snap), now=1000.0)
+    m2 = _market(snapshot=snap); m2.oi_usd = 0.98e9
+    st = r.build_once(m2, now=1010.0)
+    assert st.verdict == "none"      # still STANDBY
+    assert st.quality > 0.0          # but quality is live, not 0.0
