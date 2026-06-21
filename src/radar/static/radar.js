@@ -33,8 +33,11 @@ const state = {
   blips: [],                 // {ts, side, usd, price}
   priceTrace: [],            // {ts, price}
   intensity: [],             // {ts, side, usd}
+  hist: { oi: [], oivel: [], cvd: [], funding: [], taker: [] },
+  lastHistPrice: null,
   frozen: false,
 };
+const SPARK_N = 80;          // ~13 min of history at the 10s data cadence
 
 // ---- DOM ----
 const fieldSvg = d3.select("#field");
@@ -51,6 +54,45 @@ function setStat(id, v, cls) {
   const b = document.querySelector(`#${id} b`);
   b.textContent = v;
   b.className = cls || "";
+}
+
+// ---- rail sparklines ----
+function pushHist(key, v) {
+  const a = state.hist[key];
+  a.push(v);
+  if (a.length > SPARK_N) a.shift();
+}
+function drawSpark(id, values, center) {
+  const svg = d3.select(`#${id} .spark`);
+  const W = 100, H = 22, n = values.length;
+  if (n < 2) { svg.selectAll("*").remove(); return; }
+  const x = d3.scaleLinear().domain([0, n - 1]).range([1, W - 1]);
+  let lo = Math.min(center, d3.min(values)), hi = Math.max(center, d3.max(values));
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.14;
+  const y = d3.scaleLinear().domain([lo - pad, hi + pad]).range([H - 2, 2]);
+  const last = values[n - 1];
+  const col = last >= center ? "var(--short)" : "var(--long)";
+  const line = d3.line().x((d, i) => x(i)).y((d) => y(d)).curve(d3.curveMonotoneX);
+  const area = d3.area().x((d, i) => x(i)).y0(y(center)).y1((d) => y(d)).curve(d3.curveMonotoneX);
+  svg.selectAll("line.base").data([0]).join("line").attr("class", "base")
+    .attr("x1", 0).attr("x2", W).attr("y1", y(center)).attr("y2", y(center));
+  svg.selectAll("path.area").data([values]).join("path").attr("class", "area")
+    .attr("fill", col).attr("d", area);
+  svg.selectAll("path.ln").data([values]).join("path").attr("class", "ln")
+    .attr("stroke", col).attr("d", line);
+  svg.selectAll("circle.end").data([last]).join("circle").attr("class", "end")
+    .attr("cx", x(n - 1)).attr("cy", y(last)).attr("r", 2).attr("fill", col);
+}
+function updateSparks(s) {
+  // one history point per real data cycle (price changes each ~10s loop)
+  if (state.lastHistPrice !== null && s.price === state.lastHistPrice) return;
+  state.lastHistPrice = s.price;
+  pushHist("oi", s.oi_delta_pct); pushHist("oivel", s.oi_velocity);
+  pushHist("cvd", s.cvd_30m); pushHist("funding", s.funding); pushHist("taker", s.taker_ratio);
+  drawSpark("oi", state.hist.oi, 0); drawSpark("oivel", state.hist.oivel, 0);
+  drawSpark("cvd", state.hist.cvd, 0); drawSpark("funding", state.hist.funding, 0);
+  drawSpark("taker", state.hist.taker, 1);
 }
 
 // ---- one-time SVG defs (glow filters) ----
@@ -139,6 +181,7 @@ function onState(s) {
           s.cvd_30m < 0 ? "neg" : "pos");
   setStat("funding", `${(s.funding * 100).toFixed(4)}%`, s.funding < 0 ? "neg" : "pos");
   setStat("taker", s.taker_ratio.toFixed(2));
+  updateSparks(s);
 
   // imbalance split bar (reconstruct shares from ratio + bigger side)
   const imbVal = document.getElementById("imb-val");

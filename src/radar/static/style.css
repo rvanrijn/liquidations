@@ -66,12 +66,17 @@ main{display:grid;grid-template-columns:1fr 248px;min-height:0}
   color:var(--muted)}
 #qgauge .qval{font:600 26px ui-monospace,monospace;fill:var(--price)}
 
-.stat{display:flex;justify-content:space-between;align-items:center;
-  padding:8px 11px;border-radius:9px;background:rgba(255,255,255,.018);
+.stat{display:flex;flex-direction:column;gap:5px;
+  padding:8px 11px 6px;border-radius:9px;background:rgba(255,255,255,.018);
   border:1px solid var(--grid);font-size:12px}
+.stat-row{display:flex;justify-content:space-between;align-items:center}
 .stat span{color:var(--muted)}
 .stat b{color:var(--price);font-weight:600;font-variant-numeric:tabular-nums}
 .stat b.pos{color:var(--short)} .stat b.neg{color:var(--long)}
+.spark{width:100%;height:22px;display:block;overflow:visible}
+.spark .area{opacity:.16} .spark .ln{fill:none;stroke-width:1.4}
+.spark .base{stroke:var(--grid);stroke-width:1;stroke-dasharray:2 3}
+.spark .end{stroke:#0e141f;stroke-width:1}
 
 #imbwrap{display:flex;flex-direction:column;gap:6px;padding:10px 11px;
   border-radius:9px;border:1px solid var(--grid);background:rgba(255,255,255,.018)}
