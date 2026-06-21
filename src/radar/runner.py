@@ -73,6 +73,27 @@ async def _fetch_funding(client) -> float:
     return 0.0
 
 
+async def _fetch_taker(client) -> float:
+    """5m taker buy/sell ratio, averaged over the last 3 periods (matches engine).
+
+    >1 = net taker buying, <1 = net selling. Public futures-data endpoint.
+    """
+    try:
+        await client._ensure_session()
+        async with client.session.get(
+            "https://fapi.binance.com/futures/data/takerlongshortRatio",
+            params={"symbol": "BTCUSDT", "period": "5m", "limit": 3},
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data:
+                    ratios = [float(d["buySellRatio"]) for d in data]
+                    return sum(ratios) / len(ratios)
+    except Exception:
+        pass
+    return 1.0
+
+
 async def _fetch_cvd(client):
     """CVD from 1m-kline taker volumes (robust REST, no trade WS).
 
@@ -228,10 +249,7 @@ class RadarRunner:
                 # premiumIndex for funding, 1m-kline taker volumes for CVD.
                 funding = await _fetch_funding(client)
                 cvd_1m, cvd_30m, rest_ok = await _fetch_cvd(client)
-                taker_ratio = 1.0
-                _get_taker = getattr(client, "get_taker_ratio", None)
-                if _get_taker is not None:
-                    taker_ratio = await _get_taker("BTC") or 1.0
+                taker_ratio = await _fetch_taker(client)
                 liq_long_usd, liq_short_usd, _ = liq_feed.totals()
                 market = SimpleNamespace(
                     price=price,
