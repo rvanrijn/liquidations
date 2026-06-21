@@ -74,6 +74,8 @@ main{display:grid;grid-template-columns:1fr 248px;min-height:0}
 .stat b{color:var(--price);font-weight:600;font-variant-numeric:tabular-nums}
 .stat b.pos{color:var(--short)} .stat b.neg{color:var(--long)}
 .spark{width:100%;height:22px;display:block;overflow:visible}
+.hspark{width:128px;height:26px;margin-left:6px;align-self:center}
+.qspark{width:108px;height:22px;margin-top:8px}
 .spark .area{opacity:.16} .spark .ln{fill:none;stroke-width:1.4}
 .spark .base{stroke:var(--grid);stroke-width:1;stroke-dasharray:2 3}
 .spark .end{stroke:#0e141f;stroke-width:1}
