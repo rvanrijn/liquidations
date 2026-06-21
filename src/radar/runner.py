@@ -55,6 +55,47 @@ def build_snapshot(btc, now: float):
     )
 
 
+_FAPI = "https://fapi.binance.com/fapi/v1"
+
+
+async def _fetch_funding(client) -> float:
+    """Current BTCUSDT perpetual funding rate from the public premiumIndex."""
+    try:
+        await client._ensure_session()
+        async with client.session.get(
+            f"{_FAPI}/premiumIndex", params={"symbol": "BTCUSDT"}
+        ) as resp:
+            if resp.status == 200:
+                d = await resp.json()
+                return float(d.get("lastFundingRate", 0.0))
+    except Exception:
+        pass
+    return 0.0
+
+
+async def _fetch_cvd(client):
+    """CVD from 1m-kline taker volumes (robust REST, no trade WS).
+
+    Returns (cvd_1m_usd, cvd_30m_usd, ok). Per-candle delta in quote (USD) =
+    2*takerBuyQuote - quoteVolume; latest candle = 1m flow, sum of last 30 = 30m.
+    """
+    try:
+        await client._ensure_session()
+        async with client.session.get(
+            f"{_FAPI}/klines",
+            params={"symbol": "BTCUSDT", "interval": "1m", "limit": 31},
+        ) as resp:
+            if resp.status != 200:
+                return 0.0, 0.0, False
+            klines = await resp.json()
+        deltas = [2.0 * float(k[10]) - float(k[7]) for k in klines]  # k[10]=takerBuyQuote, k[7]=quoteVol
+        if not deltas:
+            return 0.0, 0.0, True
+        return deltas[-1], sum(deltas[-30:]), True
+    except Exception:
+        return 0.0, 0.0, False
+
+
 def _live_quality(snapshot, oi_delta, oi_vel, range_6h, funding, taker_ratio) -> float:
     """The engine's pure quality score for the current state, gates aside.
 
@@ -99,7 +140,11 @@ class RadarRunner:
 
         oi_delta = compute.oi_change_pct(self.oi_history)
         oi_vel = compute.oi_velocity(self.oi_history)
-        cvd_30m = compute.cvd_sum(self.cvd_history)
+        # Prefer a precomputed cvd_30m from the market read (run() supplies a
+        # robust kline-derived value); fall back to the rolling deque sum.
+        cvd_30m = getattr(market, "cvd_30m", None)
+        if cvd_30m is None:
+            cvd_30m = compute.cvd_sum(self.cvd_history)
         range_6h = compute.price_range_6h(self.price_history, now=now)
 
         signal = self.engine.evaluate(
@@ -157,19 +202,10 @@ class RadarRunner:
 
         from src.liqhunt.candles import CandleFetcher
         from src.liqlevels.client import BinanceLiqClient
-        from src.orderflow.aggregator import OrderFlowAggregator
-        from src.orderflow.clients.binance import BinanceTradeClient
         from src.radar.feeds import RadarLiqFeed
 
         client = BinanceLiqClient()
         candle_fetcher = CandleFetcher()
-        btc_flow = OrderFlowAggregator(window_minutes=1)
-
-        def on_btc_trade(event):
-            if event.coin == "BTC":
-                btc_flow.add_event(event)
-
-        btc_ws = BinanceTradeClient(coins=["BTC"], on_event=on_btc_trade)
 
         def _emit_liq(ts, side, usd, price):
             if self.on_liq:
@@ -178,8 +214,6 @@ class RadarRunner:
         liq_feed = RadarLiqFeed(symbol="btcusdt", on_event=_emit_liq)
 
         await self._seed_history(client)
-
-        asyncio.create_task(btc_ws.connect())
         asyncio.create_task(liq_feed.connect())
 
         while True:
@@ -190,9 +224,10 @@ class RadarRunner:
                 now = _time()
                 await client._ensure_session()
                 candles = await candle_fetcher.fetch(client.session)
-                _, _, cvd_1m = btc_flow.totals()
-                # taker_ratio is an optional regime input; older engine builds
-                # lack get_taker_ratio. Degrade to the neutral 1.0 the engine defaults.
+                # Funding + CVD from robust public REST (no flaky trade WS):
+                # premiumIndex for funding, 1m-kline taker volumes for CVD.
+                funding = await _fetch_funding(client)
+                cvd_1m, cvd_30m, rest_ok = await _fetch_cvd(client)
                 taker_ratio = 1.0
                 _get_taker = getattr(client, "get_taker_ratio", None)
                 if _get_taker is not None:
@@ -205,14 +240,14 @@ class RadarRunner:
                     avg_range=candle_fetcher.avg_range,
                     liq_levels_long=[(l.price, l.estimated_usd) for l in btc.longs_at_risk] if btc else [],
                     liq_levels_short=[(l.price, l.estimated_usd) for l in btc.shorts_at_risk] if btc else [],
-                    funding=getattr(btc, "funding_rate", 0.0) if btc else 0.0,
+                    funding=funding,
                     taker_ratio=taker_ratio,
                     liq_long_usd=liq_long_usd,
                     liq_short_usd=liq_short_usd,
                     oi_usd=btc.open_interest_usd if btc else 0.0,
                     cvd_1m=cvd_1m,
-                    connections={"liq_feed": liq_feed.connected,
-                                 "trade_feed": getattr(btc_ws, "connected", False)},
+                    cvd_30m=cvd_30m,
+                    connections={"liq_feed": liq_feed.connected, "trade_feed": rest_ok},
                 )
                 self.build_once(market, now=now)
             except Exception:

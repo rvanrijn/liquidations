@@ -135,8 +135,9 @@ function onState(s) {
   drawQuality(s.quality || 0);
   setStat("oi", `${s.oi_delta_pct.toFixed(2)}%`, s.oi_delta_pct < 0 ? "neg" : "pos");
   setStat("oivel", s.oi_velocity.toFixed(3), s.oi_velocity < 0 ? "neg" : "pos");
-  setStat("cvd", `${(s.cvd_30m / 1e6).toFixed(2)}M`, s.cvd_30m < 0 ? "neg" : "pos");
-  setStat("funding", s.funding.toFixed(4), s.funding < 0 ? "neg" : "pos");
+  setStat("cvd", `${s.cvd_30m < 0 ? "−" : "+"}$${fmtUsd(Math.abs(s.cvd_30m))}`,
+          s.cvd_30m < 0 ? "neg" : "pos");
+  setStat("funding", `${(s.funding * 100).toFixed(4)}%`, s.funding < 0 ? "neg" : "pos");
   setStat("taker", s.taker_ratio.toFixed(2));
 
   // imbalance split bar (reconstruct shares from ratio + bigger side)
@@ -214,6 +215,13 @@ function draw() {
     .attr("x1", 0).attr("x2", W).attr("y1", y(state.price)).attr("y2", y(state.price));
   gPrice.selectAll("circle.nowdot").data([0]).join("circle").attr("class", "nowdot")
     .attr("filter", "url(#glowStrong)").attr("cx", W - 2).attr("cy", y(state.price)).attr("r", 3.5);
+  // pulsing ring around the "now" dot — always-on heartbeat
+  const pulse = (Math.sin(now / 320) + 1) / 2;
+  gPrice.selectAll("circle.nowpulse").data([0]).join("circle").attr("class", "nowpulse")
+    .attr("cx", W - 2).attr("cy", y(state.price))
+    .attr("r", 4 + pulse * 11).attr("fill", "none")
+    .attr("stroke", "var(--price)").attr("stroke-width", 1)
+    .attr("opacity", 0.45 * (1 - pulse));
 
   // ripple rings for large recent liquidations
   const rips = state.blips.filter((b) => b.usd >= RIPPLE_USD && (now - b.ts * 1000) < RIPPLE_MS);
@@ -226,15 +234,17 @@ function draw() {
     .attr("stroke-width", 1.5)
     .attr("opacity", (b) => 0.6 * (1 - (now - b.ts * 1000) / RIPPLE_MS));
 
-  // blips
+  // blips — pop in on entry (r: 0 → target), then keep size while scrolling/fading
   state.blips = state.blips.filter((b) => b.ts * 1000 >= now - WINDOW_MS);
-  gBlip.selectAll("circle.blip").data(state.blips, (b) => `${b.ts}-${b.price}`).join(
-    (en) => en.append("circle").attr("class", (b) => `blip dot-${b.side}`)
-      .on("mousemove", (ev, b) => showTip(ev, b)).on("mouseout", hideTip),
-    (up) => up, (ex) => ex.remove()
-  ).attr("cx", (b) => x(b.ts * 1000))
+  const sel = gBlip.selectAll("circle.blip").data(state.blips, (b) => `${b.ts}-${b.price}`);
+  sel.exit().remove();
+  const ent = sel.enter().append("circle").attr("class", (b) => `blip dot-${b.side}`)
+    .attr("r", 0)
+    .on("mousemove", (ev, b) => showTip(ev, b)).on("mouseout", hideTip);
+  ent.transition().duration(300).ease(d3.easeBackOut).attr("r", (b) => usdToRadius(b.usd));
+  ent.merge(sel)
+    .attr("cx", (b) => x(b.ts * 1000))
     .attr("cy", (b) => Math.max(2, Math.min(H - 2, y(b.price))))
-    .attr("r", (b) => usdToRadius(b.usd))
     .attr("opacity", (b) => 0.30 + 0.6 * ageAlpha(now - b.ts * 1000));
 
   drawIntensity(now);

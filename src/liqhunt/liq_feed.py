@@ -25,7 +25,11 @@ class LiqFeed:
 
         while True:
             try:
-                async with websockets.connect(self._ws_url) as ws:
+                # Lenient keepalive: Binance drives its own pings; an aggressive
+                # client ping_timeout was closing idle forceOrder streams (1011).
+                async with websockets.connect(
+                    self._ws_url, ping_interval=20, ping_timeout=60, close_timeout=5
+                ) as ws:
                     self.connected = True
                     self._reconnect_delay = 1
                     logger.info("LiqFeed: Connected to %s", self._ws_url)
