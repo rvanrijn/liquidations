@@ -8,6 +8,16 @@ dependencies = [
     "rich>=13.0",
     "python-dotenv>=1.0",
     "aiohttp>=3.9",
+    "python-kraken-sdk>=2.0.0",
+    "pybit>=5.6.0",
+    "python-okx>=0.4.0",
+    "hyperliquid-python-sdk>=0.22.0",
+    "eth-account>=0.11.0",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "asyncssh>=2.17",
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -20,3 +30,21 @@ dev = [
 liq-dashboard = "src.main:main"
 orderflow = "src.orderflow.main:main"
 liqlevels = "src.liqlevels.main:main"
+scalper = "src.scalper.main:main"
+scalper-backtest = "src.scalper.backtest:main"
+liqhunt = "src.liqhunt.main:main"
+liqbot = "src.krakenbot.main:main"
+krakenbot-backtest = "src.krakenbot.backtest:main"
+battle-backtest = "src.krakenbot.backtest_battle:main"
+bybitbot = "src.bybitbot.main:main"
+hlbot = "src.hlbot.main:main"
+deribitbot = "src.deribitbot.main:main"
+visualizer = "src.visualizer.app:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

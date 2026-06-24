@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Liqhunt Cascade Radar</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="left">
+        <span id="price">BTC —</span>
+        <span id="chg" class="chg"></span>
+        <svg id="pricespark" class="spark hspark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="center">
+        <span id="verdict" class="standby">STANDBY</span>
+      </div>
+      <div class="right">
+        <span id="devbadge" class="hidden">⚙ DEV · day&nbsp;filter&nbsp;off</span>
+        <span id="clock" class="clock">—</span>
+      </div>
+    </header>
+
+    <main>
+      <svg id="field"></svg>
+      <aside id="rail">
+        <div class="qwrap">
+          <svg id="qgauge" viewBox="0 0 132 132" aria-label="quality"></svg>
+          <div class="qcaption">QUALITY</div>
+          <svg id="qspark" class="spark qspark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg>
+        </div>
+
+        <div class="stat" id="oi"><div class="stat-row"><span>OI Δ</span><b>—</b></div><svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg></div>
+        <div class="stat" id="oivel"><div class="stat-row"><span>OI vel %/min</span><b>—</b></div><svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg></div>
+        <div class="stat" id="cvd"><div class="stat-row"><span>CVD 30m</span><b>—</b></div><svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg></div>
+        <div class="stat" id="funding"><div class="stat-row"><span>Funding</span><b>—</b></div><svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg></div>
+        <div class="stat" id="taker"><div class="stat-row"><span>Taker</span><b>—</b></div><svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none"></svg></div>
+
+        <div id="imbwrap">
+          <div class="imb-head"><span>IMBALANCE</span><b id="imb-val">—</b></div>
+          <div class="imb-bar">
+            <div id="imb-long"></div>
+            <div id="imb-short"></div>
+          </div>
+          <div class="imb-legend"><span class="lg-long">long</span><span class="lg-short">short</span></div>
+        </div>
+
+        <div id="conns">
+          <span id="c-liq" class="conn"><i></i>liq feed</span>
+          <span id="c-trade" class="conn"><i></i>trade feed</span>
+        </div>
+      </aside>
+    </main>
+
+    <svg id="intensity"></svg>
+    <div id="hint">SPACE&nbsp;freeze&nbsp;·&nbsp;liquidation&nbsp;cascade&nbsp;radar</div>
+  </div>
+  <div id="tooltip" class="hidden"></div>
+  <script src="/static/radar.js"></script>
+</body>
+</html>

@@ -9,10 +9,13 @@ from rich.text import Text
 from rich.columns import Columns
 from rich.align import Align
 
+from datetime import datetime
+from time import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.liqlevels.client import CoinLiquidations
+    from src.liqlevels.models import Battle, LiqSnapshot
 
 
 def format_usd(value: float) -> str:
@@ -217,6 +220,143 @@ def build_status_bar(connected: bool, last_update: str, coin_count: int) -> Text
     return status
 
 
+def build_magnet_status(
+    snapshot: "LiqSnapshot | None",
+    stats: dict,
+    current_price: float = 0.0,
+    current_oi: float = 0.0,
+) -> Panel:
+    """Build current magnet battle status + all-time accuracy."""
+    from src.liqlevels.models import RESOLVE_MOVE_PCT
+
+    content = Text()
+
+    # Current battle
+    if snapshot:
+        p = current_price or snapshot.btc_price
+        move_pct = (p - snapshot.btc_price) / snapshot.btc_price * 100
+
+        content.append("ACTIVE BATTLE  ", style="bold yellow")
+        content.append(f"BTC {format_price(p)}", style="bold")
+        content.append("  │  ", style="dim")
+        content.append("Long $: ", style="red")
+        content.append(format_usd(snapshot.total_long_usd), style="bold red")
+        content.append("  Short $: ", style="green")
+        content.append(format_usd(snapshot.total_short_usd), style="bold green")
+        content.append("  │  ", style="dim")
+        content.append("Magnet: ", style="dim")
+        magnet = snapshot.bigger_side
+        style = "bold red" if magnet == "LONG" else "bold green"
+        content.append(f"{magnet} ({snapshot.imbalance_ratio:.1f}x)", style=style)
+        content.append("  │  ", style="dim")
+        elapsed = time() - snapshot.timestamp
+        if elapsed >= 3600:
+            content.append(f"{elapsed / 3600:.1f}h", style="dim")
+        elif elapsed >= 60:
+            content.append(f"{elapsed / 60:.0f}m", style="dim")
+        else:
+            content.append(f"{elapsed:.0f}s", style="dim")
+
+        # Show price movement from snapshot
+        content.append("\n")
+        if move_pct < 0:
+            arrow = "v"
+            move_style = "bold red"
+            toward = "LONG liq"
+        else:
+            arrow = "^"
+            move_style = "bold green"
+            toward = "SHORT liq"
+        content.append(f" {arrow} {move_pct:+.3f}% toward {toward}", style=move_style)
+        content.append(f"  │  Resolves at +/-{RESOLVE_MOVE_PCT}%", style="dim")
+        content.append(f"  │  From {format_price(snapshot.btc_price)}", style="dim")
+
+        # OI change since snapshot
+        if snapshot.open_interest_usd > 0 and current_oi > 0:
+            oi_delta_pct = (current_oi - snapshot.open_interest_usd) / snapshot.open_interest_usd * 100
+            content.append("\n")
+            content.append(f" OI: {format_usd(current_oi)}", style="bold")
+            if oi_delta_pct < 0:
+                content.append(f" ({oi_delta_pct:+.2f}% = liqs)", style="bold red")
+            else:
+                content.append(f" ({oi_delta_pct:+.2f}% = new pos)", style="bold green")
+    else:
+        content.append("WAITING  ", style="dim")
+        content.append("No active battle (insufficient imbalance)", style="dim")
+
+    content.append("\n")
+
+    # All-time stats
+    total = stats.get("total", 0)
+    accuracy = stats.get("accuracy", 0.0)
+    acc_style = "bold green" if accuracy >= 55 else "bold red" if accuracy < 45 else "bold yellow"
+    content.append(f"All-time: {total} battles, ", style="dim")
+    content.append(f"{accuracy:.1f}% accurate", style=acc_style)
+
+    return Panel(content, title="MAGNET MONITOR (BTC)", border_style="magenta")
+
+
+def build_magnet_breakdown(stats: dict, stats_15x: dict, stats_20x: dict) -> Panel:
+    """Build accuracy breakdown by imbalance ratio."""
+    content = Text()
+    for label, s in [("All", stats), (">1.5x", stats_15x), (">2.0x", stats_20x)]:
+        n = s.get("total", 0)
+        acc = s.get("accuracy", 0.0)
+        acc_style = "bold green" if acc >= 55 else "bold red" if acc < 45 else "bold yellow"
+        content.append(f" {label}: ", style="dim")
+        content.append(f"{acc:.0f}%", style=acc_style)
+        content.append(f" ({n})", style="dim")
+        content.append("  ", style="dim")
+    return Panel(content, title="Accuracy by Imbalance", border_style="dim magenta")
+
+
+def build_battle_log(recent_battles: list["Battle"]) -> Table:
+    """Build a table of the last N resolved battles."""
+    table = Table(
+        title="RECENT BATTLES",
+        expand=True,
+        title_style="bold magenta",
+    )
+    table.add_column("#", width=3, justify="right", style="dim")
+    table.add_column("Time", width=8)
+    table.add_column("Long $", justify="right", width=9)
+    table.add_column("Short $", justify="right", width=9)
+    table.add_column("Magnet", justify="center", width=6)
+    table.add_column("Moved", justify="center", width=6)
+    table.add_column("OK?", justify="center", width=4)
+    table.add_column("Move%", justify="right", width=7)
+    table.add_column("OI%", justify="right", width=7)
+    table.add_column("Ratio", justify="right", width=6)
+    table.add_column("Dur", justify="right", width=7)
+
+    for i, b in enumerate(recent_battles, 1):
+        ts = datetime.fromtimestamp(b.timestamp).strftime("%H:%M:%S")
+        bigger_style = "red" if b.bigger_side == "LONG" else "green"
+        moved_style = "red" if b.moved_side == "LONG" else "green"
+        ok = Text("Y", style="bold green") if b.hypothesis_correct else Text("N", style="bold red")
+        dur_min = b.duration_seconds / 60
+        dur_str = f"{dur_min:.0f}m" if dur_min >= 1 else f"{b.duration_seconds:.0f}s"
+
+        oi_text = Text(f"{b.oi_change_pct:+.1f}%",
+                       style="red" if b.oi_change_pct < 0 else "green") if b.oi_change_pct else Text("-", style="dim")
+
+        table.add_row(
+            str(i),
+            ts,
+            format_usd(b.total_long_usd),
+            format_usd(b.total_short_usd),
+            Text(b.bigger_side[:1], style=bigger_style),
+            Text(b.moved_side[:1], style=moved_style),
+            ok,
+            f"{b.move_pct:+.2f}%",
+            oi_text,
+            f"{b.imbalance_ratio:.2f}",
+            dur_str,
+        )
+
+    return table
+
+
 class LiqLevelsDashboard:
     """Dashboard for liquidation levels."""
 
@@ -225,13 +365,33 @@ class LiqLevelsDashboard:
         self.data: dict[str, "CoinLiquidations"] = {}
         self.connected = False
         self.last_update = "-"
+        # Magnet monitor state
+        self.monitor_snapshot: "LiqSnapshot | None" = None
+        self.monitor_stats: dict = {}
+        self.monitor_stats_15x: dict = {}
+        self.monitor_stats_20x: dict = {}
+        self.monitor_recent: list["Battle"] = []
 
     def update_data(self, data: dict[str, "CoinLiquidations"]):
         """Update the dashboard data."""
         self.data = data
         self.connected = bool(data)
-        from datetime import datetime
         self.last_update = datetime.now().strftime("%H:%M:%S")
+
+    def update_monitor_data(
+        self,
+        snapshot: "LiqSnapshot | None",
+        stats: dict,
+        stats_15x: dict,
+        stats_20x: dict,
+        recent_battles: list["Battle"],
+    ):
+        """Update magnet monitor display data."""
+        self.monitor_snapshot = snapshot
+        self.monitor_stats = stats
+        self.monitor_stats_15x = stats_15x
+        self.monitor_stats_20x = stats_20x
+        self.monitor_recent = recent_battles
 
     def render(self) -> Group:
         """Render the dashboard."""
@@ -245,13 +405,26 @@ class LiqLevelsDashboard:
         longs_table = build_longs_table(self.data)
         shorts_table = build_shorts_table(self.data)
 
+        # Build magnet monitor panels
+        btc = self.data.get("BTC")
+        btc_price = btc.current_price if btc else 0.0
+        btc_oi = btc.open_interest_usd if btc else 0.0
+        magnet_status = build_magnet_status(self.monitor_snapshot, self.monitor_stats, btc_price, btc_oi)
+        magnet_breakdown = build_magnet_breakdown(
+            self.monitor_stats, self.monitor_stats_15x, self.monitor_stats_20x,
+        )
+        battle_log = build_battle_log(self.monitor_recent)
+
         return Group(
             "",
             Align.center(build_summary_bar(self.data)),
             "",
             Columns([longs_table, shorts_table], expand=True, equal=True),
             "",
-            build_coin_summary_table(self.data),
+            magnet_status,
+            magnet_breakdown,
+            "",
+            Columns([build_coin_summary_table(self.data), battle_log], expand=True, equal=True),
             "",
             Panel(
                 build_status_bar(

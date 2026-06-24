@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battle Visualizer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div id="loading">Syncing VPS data...</div>
+
+    <div id="sidebar">
+        <h2>Battle Visualizer</h2>
+
+        <div class="filter-group">
+            <label>OI Gate %</label>
+            <div class="filter-row">
+                <input type="range" id="oi-gate" min="-100" max="-10" value="-35" step="1">
+                <span class="val" id="oi-gate-val">-0.35%</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>Cooldown (min)</label>
+            <div class="filter-row">
+                <input type="range" id="cooldown" min="0" max="60" value="20" step="1">
+                <span class="val" id="cooldown-val">20m</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>Min Imbalance</label>
+            <div class="filter-row">
+                <input type="range" id="min-imbalance" min="100" max="300" value="125" step="5">
+                <span class="val" id="min-imbalance-val">1.25x</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>HA Min Streak</label>
+            <div class="filter-row">
+                <input type="range" id="ha-streak" min="0" max="5" value="2" step="1">
+                <span class="val" id="ha-streak-val">2</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>HA Body Ratio</label>
+            <div class="filter-row">
+                <input type="range" id="ha-body" min="0" max="100" value="30" step="5">
+                <span class="val" id="ha-body-val">0.30</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>OI Deep Threshold</label>
+            <div class="filter-row">
+                <input type="range" id="oi-deep" min="-100" max="-20" value="-45" step="1">
+                <span class="val" id="oi-deep-val">-0.45%</span>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>Skip Hours (UTC)</label>
+            <div class="hours-grid" id="skip-hours"></div>
+        </div>
+
+        <button class="btn" id="apply-btn">Apply Filters</button>
+        <button class="btn" id="sync-btn">Sync VPS</button>
+
+        <div id="summary"></div>
+    </div>
+
+    <div id="main">
+        <div id="chart-container"></div>
+        <div id="results">
+            <div id="equity-container"></div>
+            <div id="trades-table-wrap">
+                <table id="trades-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Dir</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>Move%</th>
+                            <th>PnL</th>
+                            <th>OI%</th>
+                            <th>Imb</th>
+                            <th>Reason</th>
+                            <th>Filters</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
