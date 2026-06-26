@@ -219,16 +219,24 @@ figcaption{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;color:v
   <section class="reveal">
     <div class="sec-head">
       <div class="eyebrow">No longer a backtest</div>
-      <h2>Live now — watching the one number that decides it.</h2>
-      <p class="lead">Backtesting is exhausted; the rest is forward proof. A paper trader trades every BTC + ETH 4h break (TP+3% / −2% / 8-day), logs the per-asset split, and recomputes BTC's drawdown against a hard line: its worst-ever drawdown lasted <b>394 days, then recovered</b>. If BTC crosses 394 without a new equity high, the edge has likely decayed and the strategy stands down on BTC — while ETH keeps running.</p>
+      <h2>Live now — three dials that decide its fate.</h2>
+      <p class="lead">Backtesting is exhausted; the rest is forward proof. And <b>every confluence filter died out-of-sample</b> — EMA200 trend, break strength, and RSI divergence each looked good in one slice and reversed in the next. So the trader takes the <b>raw</b> 4h break (TP+3% / −2% / 8-day) and watches three live dials instead, each answering a question the backtest left open.</p>
     </div>
     <figure>
       <img src="rsi-4h-btc-equity.png" alt="BTC 4h strategy equity curve with an underwater drawdown panel — the recent drawdown approaches the historical maximum">
-      <figcaption>BTC 4h equity (top) + drawdown (bottom) · the curve climbs to a July-2025 peak then rolls over · the current red drawdown is nearly as deep and long as the worst-ever — the line the forward tester watches.</figcaption>
+      <figcaption>BTC 4h equity (top) + drawdown (bottom) · the curve climbs to a July-2025 peak then rolls over · the current red drawdown is nearly as deep and long as the worst-ever — Dial 1.</figcaption>
     </figure>
     <div class="callout">
       <div class="glyph brass" style="font-family:var(--mono)">348 / 394</div>
-      <p><b>The decay line.</b> ~46 days of BTC drawdown left before it exceeds anything the strategy has survived. <span class="pos">ETH sits at 66/394 — healthy.</span> The forward tester flags the crossing automatically, so the call gets made by the data, not a hunch.</p>
+      <p><b>Dial 1 · Decay line.</b> BTC's worst-ever drawdown lasted 394 days, then recovered. It's at <b>348</b> — ~46 days of slack before it exceeds anything the strategy has survived. <span class="pos">ETH: 66/394, healthy.</span> Cross it without a new high → stand down BTC, keep ETH.</p>
+    </div>
+    <div class="callout">
+      <div class="glyph brass" style="font-family:var(--mono)">BTC / ETH</div>
+      <p><b>Dial 2 · Per-asset split.</b> Live P&amp;L broken out by coin, so a fading BTC can't hide inside a healthy ETH aggregate — and you can down-weight the laggard while the edge still works where it works.</p>
+    </div>
+    <div class="callout">
+      <div class="glyph brass" style="font-family:var(--mono)">Δ&nbsp;shadow−live</div>
+      <p><b>Dial 3 · Let-run edge.</b> The one thing that beat the +3% take-profit in <em>every</em> test was simply letting winners run — a hold-48 exit made 2–3× the net, robustly out-of-sample. The tester logs that hold-48 outcome as a shadow beside the live bracket; if the gap stays positive for months, that's the evidence to widen the exit — without trusting the backtest alone.</p>
     </div>
   </section>
 
@@ -236,7 +244,7 @@ figcaption{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;color:v
     <p>A real edge — but only on the right timeframe, in the right assets, watched for the day it stops being real.</p>
     <div class="fine">
       Wilder RSI(14) · 3-bar pivots · line through last 2 pivots · BTC + ETH 4h · TP+3% / −2% / 8-day<br>
-      Verdict: no edge on 1h (raw, exit-tuned, or EMA200-filtered — all died out-of-sample). A genuine, OOS- and drift-validated edge on 4h, concentrated in BTC &amp; ETH. Alive on ETH; BTC under a 394-day decay watch. Now forward-testing live — the data, not a hunch, makes the next call.<br>
+      Verdict: no edge on 1h. A genuine, OOS- and drift-validated edge on 4h, concentrated in BTC &amp; ETH — in the <em>raw</em> break, not in confluence (trend, break-strength, and divergence filters all died out-of-sample). Alive on ETH; BTC under a 394-day decay watch. Forward-testing live on three dials — decay line, per-asset split, and the let-run-edge gap — so the data, not a hunch, makes the next call.<br>
       Figures: trendline-break-anatomy.png · rsi-sweep-2y.png · rsi-trend-filter-grid.png · rsi-4h-oos-drift.png · rsi-4h-btc-vs-eth-equity.png
     </div>
   </section>
