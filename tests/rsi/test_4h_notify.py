@@ -6,16 +6,19 @@ import rsi_4h_forward as F
 from rsi_4h_forward import Journal, _format_entry_msg, telegram_notify
 
 
-def test_format_entry_msg_long():
+def test_format_entry_msg_long_directional():
     s = _format_entry_msg({"asset": "BTC/USDT", "side": "LONG", "price": 62400, "tp": 64272, "sl": 61152})
     assert "🟢" in s and "BTC LONG" in s
     assert "62,400" in s and "64,272" in s and "61,152" in s
-    assert "+3%" in s and "−2%" in s
+    # LONG: TP above (price up), SL below (price down)
+    assert "▲ +3%" in s and "▼ −2%" in s
 
 
-def test_format_entry_msg_short_uses_red():
+def test_format_entry_msg_short_directional():
     s = _format_entry_msg({"asset": "ETH/USDT", "side": "SHORT", "price": 3000, "tp": 2910, "sl": 3060})
     assert "🔴" in s and "ETH SHORT" in s
+    # SHORT: TP below entry (price down = profit), SL above (price up)
+    assert "▼ −3%" in s and "▲ +2%" in s
 
 
 def test_notify_is_noop_without_env(monkeypatch):

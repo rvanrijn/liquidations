@@ -241,6 +241,15 @@ def telegram_notify(text):
         return False
 
 
+def _price_move(frm, to):
+    """Directional price-move label, e.g. '▲ +3%' / '▼ −3%' — arrow + sign read
+    off the actual prices so SHORTs show TP below entry (price down = profit)."""
+    pct = (to / frm - 1) * 100 if frm else 0.0
+    arrow = "▲" if to >= frm else "▼"
+    sign = "+" if pct >= 0 else "−"
+    return f"{arrow} {sign}{abs(pct):.0f}%"
+
+
 def _format_entry_msg(d):
     """Render an ENTRY event dict into a phone-friendly Telegram message."""
     side = d.get("side", "?"); emoji = "🟢" if side == "LONG" else "🔴"
@@ -248,8 +257,8 @@ def _format_entry_msg(d):
     price = d.get("price", 0); tp = d.get("tp", 0); sl = d.get("sl", 0)
     return (f"{emoji} RSI 4h · {asset} {side}\n"
             f"entry  {price:,.2f}\n"
-            f"TP  {tp:,.2f}  (+{TP_PCT*100:.0f}%)\n"
-            f"SL  {sl:,.2f}  (−{STOP_PCT*100:.0f}%)")
+            f"TP  {tp:,.2f}  ({_price_move(price, tp)})\n"
+            f"SL  {sl:,.2f}  ({_price_move(price, sl)})")
 
 
 # ─── Journal ─────────────────────────────────────────────────────────────────
