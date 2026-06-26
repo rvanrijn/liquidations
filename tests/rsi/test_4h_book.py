@@ -126,3 +126,45 @@ def test_two_assets_advance_independently():
     out = b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))
     assert any(t.kind == "live" and t.reason == "TP" for t in out)
     assert not b.in_position("BTC/USDT") and b.in_position("ETH/USDT")
+
+
+def test_ladder_half_tp_then_remainder_stops_small_win():
+    b = PaperBook()  # ladder: 0.5 @ +3%, rest runs with -2% stop
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0)
+    b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.0))   # half banked at 103
+    out = b.advance("BTC/USDT", bar(2, hi=101.0, lo=97.5, close=99.0))  # remainder stops at 98
+    lad = [t for t in out if t.kind == "ladder"][0]
+    # acc = 0.5*1.03 + 0.5*0.98 = 1.005 ; net = (1-fee)^2*1.005 - 1 > 0
+    assert lad.reason == "STOP" and lad.pnl > 0
+    assert abs(lad.ret - ((1 - 0.0002) ** 2 * 1.005 - 1)) < 1e-9
+
+
+def test_ladder_runner_captures_trend_to_cap():
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0)
+    b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.0))   # half off at +3%
+    out = []
+    for k in range(2, 49):                                          # runner to 48-bar cap, close 108
+        out += b.advance("BTC/USDT", bar(k, hi=109.0, lo=99.0, close=108.0))
+    lad = [t for t in out if t.kind == "ladder"][0]
+    # acc = 0.5*1.03 + 0.5*1.08 = 1.055
+    assert lad.reason == "CAP" and abs(lad.ret - ((1 - 0.0002) ** 2 * 1.055 - 1)) < 1e-9
+    assert lad.pnl > b.live_trades[0].pnl   # ladder beats the live +3% TP that took the whole position
+
+
+def test_ladder_stop_before_partial_full_loss():
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0)
+    out = b.advance("BTC/USDT", bar(1, hi=104.0, lo=97.0, close=101.0))  # both touch; stop wins on full
+    lad = [t for t in out if t.kind == "ladder"][0]
+    assert lad.reason == "STOP" and lad.pnl < 0
+    assert abs(lad.ret - ((1 - 0.0002) ** 2 * 0.98 - 1)) < 1e-9   # whole position at -2%
+
+
+def test_ladder_survives_snapshot_restore():
+    import json
+    b = PaperBook(); b.enter("ETH/USDT", "SHORT", 200.0, ts=5)
+    b.advance("ETH/USDT", bar(1, hi=200.5, lo=193.5, close=194.0))   # SHORT half off at +3% (194)
+    snap = json.loads(json.dumps(b.snapshot()))
+    b2 = PaperBook(); b2.restore(snap)
+    assert len(b2.ladders) == 1 and b2.ladders[0].partial_done and abs(b2.ladders[0].remaining - 0.5) < 1e-9

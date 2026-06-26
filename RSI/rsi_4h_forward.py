@@ -39,6 +39,7 @@ TIMEFRAME = "4h"
 TP_PCT = 0.03
 STOP_PCT = 0.02
 CAP_BARS = 48          # 8-day live cap (and shadow hold horizon)
+LADDER_FRAC = 0.5      # scale-out shadow: take this fraction at +TP_PCT, run the rest to cap
 FEE = 0.0002           # 0.02%/side taker
 CAPITAL = 5000.0       # notional per trade
 SEED_BARS = 300        # candles to fetch per poll (RSI warmup + recent pivots)
@@ -84,6 +85,15 @@ class Shadow:
 
 
 @dataclass
+class Ladder:
+    """Scale-out shadow: half off at +TP_PCT, the rest runs to cap (−stop on remainder).
+    `acc` accumulates sum(frac_i * (1+ret_i)) across realized legs."""
+    asset: str; side: str; entry_price: float; entry_ts: int
+    stop_price: float; remaining: float = 1.0; acc: float = 0.0
+    partial_done: bool = False; bars: int = 0
+
+
+@dataclass
 class ClosedTrade:
     asset: str; side: str; entry_price: float; exit_price: float
     entry_ts: int; exit_ts: int; reason: str; ret: float; pnl: float; kind: str
@@ -99,8 +109,9 @@ class PaperBook:
         self.capital = capital; self.stop_pct = stop_pct; self.tp_pct = tp_pct
         self.cap_bars = cap_bars; self.fee = fee
         self.positions = {}        # asset -> Position | None
-        self.shadows = []          # open Shadow list
-        self.live_trades = []; self.shadow_trades = []; self.skips = 0
+        self.shadows = []          # open Shadow list (hold-48)
+        self.ladders = []          # open Ladder list (scale-out)
+        self.live_trades = []; self.shadow_trades = []; self.ladder_trades = []; self.skips = 0
 
     def in_position(self, asset):
         return self.positions.get(asset) is not None
@@ -114,6 +125,7 @@ class PaperBook:
         pos = Position(asset, side, price, ts, stop, tp)
         self.positions[asset] = pos
         self.shadows.append(Shadow(asset, side, price, ts, stop))
+        self.ladders.append(Ladder(asset, side, price, ts, stop))
         return pos
 
     def advance(self, asset, bar):
@@ -129,6 +141,10 @@ class PaperBook:
             tr = self._exit_shadow(sh, bar)
             if tr:
                 self.shadow_trades.append(tr); self.shadows.remove(sh); out.append(tr)
+        for ld in [x for x in self.ladders if x.asset == asset]:
+            tr = self._exit_ladder(ld, bar)
+            if tr:
+                self.ladder_trades.append(tr); self.ladders.remove(ld); out.append(tr)
         return out
 
     def _exit_live(self, p, bar):
@@ -157,11 +173,43 @@ class PaperBook:
         return ClosedTrade(p.asset, p.side, p.entry_price, exit_price, p.entry_ts,
                            exit_ts, reason, net, net * self.capital, kind)
 
+    def _leg_ret(self, side, entry, price):
+        return (price / entry - 1) if side == "LONG" else (entry / price - 1)
+
+    def _exit_ladder(self, L, bar):
+        """Scale-out: stop (on remainder) first, then the +TP_PCT partial, then cap.
+        Books one ClosedTrade(kind='ladder') once fully resolved."""
+        L.bars += 1
+        h, l, c, ts = bar["high"], bar["low"], bar["close"], bar["ts"]
+        tp1 = L.entry_price * (1 + self.tp_pct) if L.side == "LONG" else L.entry_price * (1 - self.tp_pct)
+        # stop on the whole remaining (pessimistic — checked before the partial)
+        if (L.side == "LONG" and l <= L.stop_price) or (L.side == "SHORT" and h >= L.stop_price):
+            L.acc += L.remaining * (1 + self._leg_ret(L.side, L.entry_price, L.stop_price))
+            L.remaining = 0.0
+            return self._close_ladder(L, "STOP", ts)
+        # partial: take LADDER_FRAC off at +TP_PCT
+        if not L.partial_done and ((L.side == "LONG" and h >= tp1) or (L.side == "SHORT" and l <= tp1)):
+            f = LADDER_FRAC
+            L.acc += f * (1 + self._leg_ret(L.side, L.entry_price, tp1))
+            L.remaining -= f; L.partial_done = True
+        # cap: the runner (remainder) exits at the close
+        if L.bars >= self.cap_bars and L.remaining > 1e-9:
+            L.acc += L.remaining * (1 + self._leg_ret(L.side, L.entry_price, c))
+            L.remaining = 0.0
+            return self._close_ladder(L, "CAP", ts)
+        return None
+
+    def _close_ladder(self, L, reason, exit_ts):
+        net = (1 - self.fee) ** 2 * L.acc - 1
+        return ClosedTrade(L.asset, L.side, L.entry_price, L.entry_price, L.entry_ts,
+                           exit_ts, reason, net, net * self.capital, "ladder")
+
     # ── persistence (cron runs are stateless between invocations) ──
     def snapshot(self):
         return {
             "positions": {a: (vars(p) if p else None) for a, p in self.positions.items()},
             "shadows": [vars(s) for s in self.shadows],
+            "ladders": [vars(x) for x in self.ladders],
             "skips": self.skips,
         }
 
@@ -169,6 +217,7 @@ class PaperBook:
         self.positions = {a: (Position(**d) if d else None)
                           for a, d in snap.get("positions", {}).items()}
         self.shadows = [Shadow(**d) for d in snap.get("shadows", [])]
+        self.ladders = [Ladder(**d) for d in snap.get("ladders", [])]
         self.skips = snap.get("skips", 0)
 
 
@@ -181,6 +230,7 @@ class Journal:
         self.events_path = events_path; self.state_path = state_path
         self.live_trades = self.live_wins = 0; self.live_net = 0.0
         self.shadow_trades = self.shadow_wins = 0; self.shadow_net = 0.0
+        self.ladder_trades = self.ladder_wins = 0; self.ladder_net = 0.0
         self.skips = 0
         self.by_asset = {}     # asset -> {"trades","wins","net"} for the LIVE leg
 
@@ -197,6 +247,9 @@ class Journal:
             elif data.get("kind") == "shadow":
                 self.shadow_trades += 1; self.shadow_net += data["pnl"]
                 if data["pnl"] > 0: self.shadow_wins += 1
+            elif data.get("kind") == "ladder":
+                self.ladder_trades += 1; self.ladder_net += data["pnl"]
+                if data["pnl"] > 0: self.ladder_wins += 1
         elif event == "SKIP":
             self.skips += 1
         if self.events_path is not None:
@@ -207,7 +260,8 @@ class Journal:
         return {"live_trades": self.live_trades, "live_wins": self.live_wins,
                 "live_net": self.live_net, "shadow_trades": self.shadow_trades,
                 "shadow_wins": self.shadow_wins, "shadow_net": self.shadow_net,
-                "skips": self.skips, "by_asset": self.by_asset}
+                "ladder_trades": self.ladder_trades, "ladder_wins": self.ladder_wins,
+                "ladder_net": self.ladder_net, "skips": self.skips, "by_asset": self.by_asset}
 
     def save_state(self, book, last_ts):
         if self.state_path is None: return
@@ -230,10 +284,12 @@ class Journal:
 
     def summary_line(self):
         wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
-        gap = self.shadow_net - self.live_net   # how much MORE "let it run" made vs live TP+3
+        gap = self.shadow_net - self.live_net      # hold-48 vs live TP+3
+        lgap = self.ladder_net - self.live_net     # scale-out vs live TP+3
         line = (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
-                f"  | shadow hold48 ${self.shadow_net:+,.0f}"
-                f"  (let-run edge Δ ${gap:+,.0f})  skipped {self.skips}")
+                f"  | hold48 ${self.shadow_net:+,.0f} (Δ ${gap:+,.0f})"
+                f"  | ladder ${self.ladder_net:+,.0f} (Δ ${lgap:+,.0f})"
+                f"  skipped {self.skips}")
         for asset, a in sorted(self.by_asset.items()):
             awr = (a["wins"] / a["trades"] * 100) if a["trades"] else 0.0
             line += (f"\n    {asset:<10} {a['trades']:>3} trades  {awr:>3.0f}% win"
@@ -413,7 +469,6 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
     con = Console()
     book = PaperBook(); j = Journal(state_path=state); j.load_state(book)
     wr = (j.live_wins / j.live_trades * 100) if j.live_trades else 0.0
-    gap = j.shadow_net - j.live_net
     n_open = sum(1 for p in book.positions.values() if p)
 
     def card(title, big, sub, c):
@@ -422,9 +477,22 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
 
     cards = Columns([
         card("LIVE P&L", f"${j.live_net:+,.0f}", f"{j.live_trades} trades · {wr:.0f}% win", sign(j.live_net)),
-        card("LET-RUN EDGE  Δ", f"${gap:+,.0f}", "hold-48 vs live TP+3", sign(gap)),
         card("OPEN · SKIPS", f"{n_open} open", f"{j.skips} skipped", BRASS),
     ], equal=True, expand=True)
+
+    # exit shoot-out: live TP+3 vs the two shadows, with Δ vs live
+    so = Table(box=box.SIMPLE_HEAVY, expand=True, title="[dim]exit shoot-out · which harvest wins?[/]", title_justify="left")
+    for c, ju in [("exit rule", "left"), ("trades", "right"), ("win%", "right"), ("net $", "right"), ("Δ vs live", "right")]:
+        so.add_column(c, justify=ju)
+    def _wr(w, n): return f"{(w / n * 100) if n else 0:.0f}%"
+    so.add_row("live · TP+3% / −2% / 8d", str(j.live_trades), _wr(j.live_wins, j.live_trades),
+               Text(f"${j.live_net:+,.0f}", style=sign(j.live_net)), Text("—", style="dim"))
+    so.add_row("shadow · hold-48", str(j.shadow_trades), _wr(j.shadow_wins, j.shadow_trades),
+               Text(f"${j.shadow_net:+,.0f}", style=sign(j.shadow_net)),
+               Text(f"${j.shadow_net - j.live_net:+,.0f}", style=sign(j.shadow_net - j.live_net)))
+    so.add_row("shadow · scale-out ½@3", str(j.ladder_trades), _wr(j.ladder_wins, j.ladder_trades),
+               Text(f"${j.ladder_net:+,.0f}", style=sign(j.ladder_net)),
+               Text(f"${j.ladder_net - j.live_net:+,.0f}", style=sign(j.ladder_net - j.live_net)))
 
     at = Table(box=box.SIMPLE_HEAVY, expand=True, title="[dim]live P&L by asset[/]", title_justify="left")
     for c, ju in [("asset", "left"), ("trades", "right"), ("win%", "right"), ("net $", "right")]:
@@ -498,6 +566,7 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
     con.print()
     con.rule(f"[bold]RSI 4h FORWARD TEST[/]  ·  BTC + ETH  ·  {datetime.now():%Y-%m-%d %H:%M}", style=BRASS)
     con.print(cards)
+    con.print(so)
     con.print(open_panel)
     con.print(at)
     con.print(decay)

@@ -70,4 +70,14 @@ def test_summary_shows_shadow_minus_live_gap():
     j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 100.0})
     j.record("EXIT", {"kind": "shadow", "asset": "BTC/USDT", "pnl": 380.0})
     s = j.summary_line()
-    assert "let-run edge" in s and "+280" in s   # gap = shadow 380 - live 100
+    assert "hold48" in s and "+280" in s   # hold-48 Δ vs live = 380 - 100 = +280
+
+
+def test_ladder_counter_and_summary():
+    j = Journal()
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 100.0})
+    j.record("EXIT", {"kind": "ladder", "pnl": 260.0})
+    j.record("EXIT", {"kind": "ladder", "pnl": -40.0})
+    assert j.ladder_trades == 2 and abs(j.ladder_net - 220.0) < 1e-9
+    s = j.summary_line()
+    assert "ladder" in s and "+120" in s   # ladder Δ vs live = 220 - 100 = +120
