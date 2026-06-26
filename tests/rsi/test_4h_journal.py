@@ -83,6 +83,16 @@ def test_ladder_counter_and_summary():
     assert "ladder" in s and "+120" in s   # ladder Δ vs live = 220 - 100 = +120
 
 
+def test_compare_msg_verdict():
+    from rsi_4h_forward import _compare_msg
+    j = Journal()
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 100.0})
+    j.record("EXIT", {"kind": "regime", "pnl": 250.0})
+    m = _compare_msg(j)
+    assert "regime vs live" in m and "regime ahead" in m   # Δ = 250 - 100 = +150 > 0
+    assert "$+150" in m
+
+
 def test_regime_counter_summary_and_state_roundtrip(tmp_path):
     sp = tmp_path / "s.json"
     j = Journal(state_path=sp); b = PaperBook()

@@ -549,6 +549,30 @@ def export_trades(assets=ASSETS, days=0, out="RSI/data/rsi_4h_trades.csv", shado
               f"  net ${net:>+9,.0f}  end eq ${kr[-1]['cum_equity_usd']:,.0f}")
 
 
+def _compare_msg(j):
+    """Regime-vs-live verdict from the LIVE accumulated journal (forward data)."""
+    lw = (j.live_wins / j.live_trades * 100) if j.live_trades else 0.0
+    rw = (j.regime_wins / j.regime_trades * 100) if j.regime_trades else 0.0
+    d = j.regime_net - j.live_net
+    verdict = "regime ahead" if d > 0 else ("live ahead" if d < 0 else "tied")
+    return ("RSI 4h · regime vs live (forward)\n"
+            f"live    {j.live_trades:>3}t  {lw:>3.0f}%  ${j.live_net:+,.0f}\n"
+            f"regime  {j.regime_trades:>3}t  {rw:>3.0f}%  ${j.regime_net:+,.0f}\n"
+            f"Δ ${d:+,.0f}  →  {verdict}")
+
+
+def weekly_compare(push=False, state="RSI/data/rsi_4h_state.json"):
+    """Print (and optionally Telegram-push) the regime-vs-live verdict from
+    accumulated forward data. Note: a week is only a handful of closed trades."""
+    b = PaperBook(); j = Journal(state_path=state); j.load_state(b)
+    msg = _compare_msg(j)
+    print(msg)
+    if j.live_trades + j.regime_trades < 10:
+        print("  (small sample — directional only, not a verdict)")
+    if push:
+        telegram_notify(msg)
+
+
 # ─── Decay-line check (is the BTC 4h edge still alive, or past its worst-ever DD?) ──
 
 def _decay_status(eq, tt, now_ms, line_days):
@@ -767,14 +791,16 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
 
 def main():
     p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
-    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash", "notify-test", "export"], nargs="?", default="once")
+    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash", "notify-test", "export", "compare"], nargs="?", default="once")
     p.add_argument("--asset", default="BTC/USDT")
     p.add_argument("--days", type=int, default=0, help="window in days; 0 = full history (replay falls back to 120)")
     p.add_argument("--out", default="RSI/data/rsi_4h_trades.csv", help="export CSV path")
     p.add_argument("--shadows", action="store_true", help="export: also include hold-48 + scale-out ladder trades")
+    p.add_argument("--push", action="store_true", help="compare: also push the verdict to Telegram")
     a = p.parse_args()
     if a.mode == "run": run_loop()
     elif a.mode == "export": export_trades(days=a.days, out=a.out, shadows=a.shadows)
+    elif a.mode == "compare": weekly_compare(push=a.push)
     elif a.mode == "notify-test":
         if not os.environ.get("RSI_TG_TOKEN") or not os.environ.get("RSI_TG_CHAT"):
             print("RSI_TG_TOKEN / RSI_TG_CHAT not set — export both, then re-run notify-test"); return
