@@ -205,3 +205,36 @@ class Journal:
         wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
         return (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
                 f"  | shadow hold48 ${self.shadow_net:+,.0f}  skipped {self.skips}")
+
+
+# ─── Orchestration ────────────────────────────────────────────────────────────
+
+def process_asset(asset, candles, book, journal, last_ts):
+    """One poll for one asset. `candles` = closed bars (oldest first).
+    Advances exits over bars newer than last_ts[asset], then enters on the
+    latest bar if it's a break and the asset is flat. Returns updated last_ts."""
+    if not candles:
+        return last_ts
+    prev = last_ts.get(asset, 0)
+    for c in candles:
+        if c[0] <= prev:
+            continue
+        bar = {"ts": c[0], "high": c[2], "low": c[3], "close": c[4]}
+        for tr in book.advance(asset, bar):
+            journal.record("EXIT", {"asset": asset, "kind": tr.kind, "side": tr.side,
+                                    "reason": tr.reason, "entry": tr.entry_price,
+                                    "exit": tr.exit_price, "ret": tr.ret,
+                                    "pnl": tr.pnl, "ts": tr.exit_ts})
+    latest = candles[-1]
+    if latest[0] > prev:
+        sig = latest_break(candles)
+        if sig is not None:
+            journal.record("SIGNAL", {"asset": asset, **sig})
+            if book.in_position(asset):
+                journal.record("SKIP", {"asset": asset, "side": sig["side"], "ts": sig["ts"]})
+            else:
+                book.enter(asset, sig["side"], sig["close"], sig["ts"])
+                journal.record("ENTRY", {"asset": asset, "side": sig["side"],
+                                         "price": sig["close"], "ts": sig["ts"]})
+    last_ts[asset] = latest[0]
+    return last_ts
