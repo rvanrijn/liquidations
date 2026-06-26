@@ -111,12 +111,14 @@ class PaperBook:
         self.positions = {}        # asset -> Position | None
         self.shadows = []          # open Shadow list (hold-48)
         self.ladders = []          # open Ladder list (scale-out)
-        self.live_trades = []; self.shadow_trades = []; self.ladder_trades = []; self.skips = 0
+        self.regimes = []          # open Position list (EMA200 trend-aligned entries, live bracket)
+        self.live_trades = []; self.shadow_trades = []; self.ladder_trades = []
+        self.regime_trades = []; self.skips = 0
 
     def in_position(self, asset):
         return self.positions.get(asset) is not None
 
-    def enter(self, asset, side, price, ts):
+    def enter(self, asset, side, price, ts, regime_ok=False):
         if self.in_position(asset):
             self.skips += 1
             return None
@@ -126,6 +128,8 @@ class PaperBook:
         self.positions[asset] = pos
         self.shadows.append(Shadow(asset, side, price, ts, stop))
         self.ladders.append(Ladder(asset, side, price, ts, stop))
+        if regime_ok:              # trend-aligned subset: same live bracket, tracked apart
+            self.regimes.append(Position(asset, side, price, ts, stop, tp))
         return pos
 
     def advance(self, asset, bar):
@@ -145,18 +149,27 @@ class PaperBook:
             tr = self._exit_ladder(ld, bar)
             if tr:
                 self.ladder_trades.append(tr); self.ladders.remove(ld); out.append(tr)
+        for rp in [x for x in self.regimes if x.asset == asset]:
+            tr = self._exit_bracket(rp, bar, "regime")
+            if tr:
+                self.regime_trades.append(tr); self.regimes.remove(rp); out.append(tr)
         return out
 
     def _exit_live(self, p, bar):
+        return self._exit_bracket(p, bar, "live")
+
+    def _exit_bracket(self, p, bar, kind):
+        """The TP+pct / −stop / cap bracket. Shared by the live book and the
+        regime shadow (identical exit rule, different entry-filter population)."""
         p.bars += 1
         h, l, c, ts = bar["high"], bar["low"], bar["close"], bar["ts"]
         if p.side == "LONG":
-            if l <= p.stop_price: return self._close(p, "STOP", p.stop_price, ts, "live")
-            if h >= p.tp_price:   return self._close(p, "TP", p.tp_price, ts, "live")
+            if l <= p.stop_price: return self._close(p, "STOP", p.stop_price, ts, kind)
+            if h >= p.tp_price:   return self._close(p, "TP", p.tp_price, ts, kind)
         else:
-            if h >= p.stop_price: return self._close(p, "STOP", p.stop_price, ts, "live")
-            if l <= p.tp_price:   return self._close(p, "TP", p.tp_price, ts, "live")
-        if p.bars >= self.cap_bars: return self._close(p, "CAP", c, ts, "live")
+            if h >= p.stop_price: return self._close(p, "STOP", p.stop_price, ts, kind)
+            if l <= p.tp_price:   return self._close(p, "TP", p.tp_price, ts, kind)
+        if p.bars >= self.cap_bars: return self._close(p, "CAP", c, ts, kind)
         return None
 
     def _exit_shadow(self, s, bar):
@@ -210,6 +223,7 @@ class PaperBook:
             "positions": {a: (vars(p) if p else None) for a, p in self.positions.items()},
             "shadows": [vars(s) for s in self.shadows],
             "ladders": [vars(x) for x in self.ladders],
+            "regimes": [vars(p) for p in self.regimes],
             "skips": self.skips,
         }
 
@@ -218,6 +232,7 @@ class PaperBook:
                           for a, d in snap.get("positions", {}).items()}
         self.shadows = [Shadow(**d) for d in snap.get("shadows", [])]
         self.ladders = [Ladder(**d) for d in snap.get("ladders", [])]
+        self.regimes = [Position(**d) for d in snap.get("regimes", [])]
         self.skips = snap.get("skips", 0)
 
 
@@ -271,6 +286,7 @@ class Journal:
         self.live_trades = self.live_wins = 0; self.live_net = 0.0
         self.shadow_trades = self.shadow_wins = 0; self.shadow_net = 0.0
         self.ladder_trades = self.ladder_wins = 0; self.ladder_net = 0.0
+        self.regime_trades = self.regime_wins = 0; self.regime_net = 0.0
         self.skips = 0
         self.by_asset = {}     # asset -> {"trades","wins","net"} for the LIVE leg
         self.notify_entries = False   # live runner sets True; replay/status/dash stay silent
@@ -291,6 +307,9 @@ class Journal:
             elif data.get("kind") == "ladder":
                 self.ladder_trades += 1; self.ladder_net += data["pnl"]
                 if data["pnl"] > 0: self.ladder_wins += 1
+            elif data.get("kind") == "regime":
+                self.regime_trades += 1; self.regime_net += data["pnl"]
+                if data["pnl"] > 0: self.regime_wins += 1
         elif event == "SKIP":
             self.skips += 1
         if self.events_path is not None:
@@ -304,7 +323,9 @@ class Journal:
                 "live_net": self.live_net, "shadow_trades": self.shadow_trades,
                 "shadow_wins": self.shadow_wins, "shadow_net": self.shadow_net,
                 "ladder_trades": self.ladder_trades, "ladder_wins": self.ladder_wins,
-                "ladder_net": self.ladder_net, "skips": self.skips, "by_asset": self.by_asset}
+                "ladder_net": self.ladder_net, "regime_trades": self.regime_trades,
+                "regime_wins": self.regime_wins, "regime_net": self.regime_net,
+                "skips": self.skips, "by_asset": self.by_asset}
 
     def save_state(self, book, last_ts):
         if self.state_path is None: return
@@ -329,9 +350,11 @@ class Journal:
         wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
         gap = self.shadow_net - self.live_net      # hold-48 vs live TP+3
         lgap = self.ladder_net - self.live_net     # scale-out vs live TP+3
+        rgap = self.regime_net - self.live_net     # EMA200-aligned (live bracket) vs live TP+3
         line = (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
                 f"  | hold48 ${self.shadow_net:+,.0f} (Δ ${gap:+,.0f})"
                 f"  | ladder ${self.ladder_net:+,.0f} (Δ ${lgap:+,.0f})"
+                f"  | regime ${self.regime_net:+,.0f} (Δ ${rgap:+,.0f}) {self.regime_trades}t"
                 f"  skipped {self.skips}")
         for asset, a in sorted(self.by_asset.items()):
             awr = (a["wins"] / a["trades"] * 100) if a["trades"] else 0.0
@@ -341,6 +364,26 @@ class Journal:
 
 
 # ─── Orchestration ────────────────────────────────────────────────────────────
+
+REGIME_EMA = 200   # slow trend filter for the regime shadow (EMA50 tested worse)
+
+
+def _ema(arr, n):
+    """Plain EMA over a 1-D sequence, seeded at arr[0]."""
+    k = 2.0 / (n + 1); out = 0.0
+    for i, v in enumerate(arr):
+        out = v if i == 0 else v * k + out * (1 - k)
+    return out  # caller wants the final (latest-bar) value
+
+
+def _regime_aligned(side, closes):
+    """True when the break agrees with the slow trend: LONG above EMA200, SHORT below.
+    Needs enough bars to be meaningful; returns False if too short to judge."""
+    if len(closes) < REGIME_EMA:
+        return False
+    e = _ema(closes, REGIME_EMA)
+    return (closes[-1] > e) if side == "LONG" else (closes[-1] < e)
+
 
 def process_asset(asset, candles, book, journal, last_ts):
     """One poll for one asset. `candles` = closed bars (oldest first).
@@ -366,10 +409,12 @@ def process_asset(asset, candles, book, journal, last_ts):
             if book.in_position(asset):
                 journal.record("SKIP", {"asset": asset, "side": sig["side"], "ts": sig["ts"]})
             else:
-                pos = book.enter(asset, sig["side"], sig["close"], sig["ts"])
+                closes = [c[4] for c in candles]
+                aligned = _regime_aligned(sig["side"], closes)
+                pos = book.enter(asset, sig["side"], sig["close"], sig["ts"], regime_ok=aligned)
                 journal.record("ENTRY", {"asset": asset, "side": sig["side"],
                                          "price": sig["close"], "tp": pos.tp_price,
-                                         "sl": pos.stop_price, "ts": sig["ts"]})
+                                         "sl": pos.stop_price, "regime": aligned, "ts": sig["ts"]})
     last_ts[asset] = latest[0]
     return last_ts
 
@@ -520,13 +565,19 @@ def _strategy_trades(asset, years_back=9, include_shadows=False):
         bt, _bv = detect_break(rsi, highs[:ph], lows[:pl], idx)
         if bt:
             sig[idx] = "LONG" if bt == "bullish_break" else "SHORT"
+    e200 = np.empty(len(closes)); kk = 2.0 / (REGIME_EMA + 1)
+    e200[0] = closes[0]
+    for i in range(1, len(closes)):
+        e200[i] = closes[i] * kk + e200[i - 1] * (1 - kk)
     book = PaperBook()
     for idx, row in enumerate(c):
         book.advance(asset, {"ts": row[0], "high": row[2], "low": row[3], "close": row[4]})
         if idx in sig and not book.in_position(asset):
-            book.enter(asset, sig[idx], row[4], row[0])
+            aligned = idx >= REGIME_EMA and (
+                (closes[idx] > e200[idx]) if sig[idx] == "LONG" else (closes[idx] < e200[idx]))
+            book.enter(asset, sig[idx], row[4], row[0], regime_ok=aligned)
     if include_shadows:
-        return book.live_trades + book.shadow_trades + book.ladder_trades
+        return book.live_trades + book.shadow_trades + book.ladder_trades + book.regime_trades
     return book.live_trades
 
 
@@ -609,6 +660,9 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
     so.add_row("shadow · scale-out ½@3", str(j.ladder_trades), _wr(j.ladder_wins, j.ladder_trades),
                Text(f"${j.ladder_net:+,.0f}", style=sign(j.ladder_net)),
                Text(f"${j.ladder_net - j.live_net:+,.0f}", style=sign(j.ladder_net - j.live_net)))
+    so.add_row("shadow · regime EMA200", str(j.regime_trades), _wr(j.regime_wins, j.regime_trades),
+               Text(f"${j.regime_net:+,.0f}", style=sign(j.regime_net)),
+               Text(f"${j.regime_net - j.live_net:+,.0f}", style=sign(j.regime_net - j.live_net)))
 
     at = Table(box=box.SIMPLE_HEAVY, expand=True, title="[dim]live P&L by asset[/]", title_justify="left")
     for c, ju in [("asset", "left"), ("trades", "right"), ("win%", "right"), ("net $", "right")]:

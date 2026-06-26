@@ -168,3 +168,29 @@ def test_ladder_survives_snapshot_restore():
     snap = json.loads(json.dumps(b.snapshot()))
     b2 = PaperBook(); b2.restore(snap)
     assert len(b2.ladders) == 1 and b2.ladders[0].partial_done and abs(b2.ladders[0].remaining - 0.5) < 1e-9
+
+
+def test_regime_shadow_only_opens_when_aligned():
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0, regime_ok=False)   # not trend-aligned
+    assert len(b.regimes) == 0                                   # no regime shadow
+    b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))  # closes live
+    b.enter("BTC/USDT", "LONG", 100.0, ts=2, regime_ok=True)    # aligned
+    assert len(b.regimes) == 1
+
+
+def test_regime_shadow_uses_live_bracket_and_books_regime_kind():
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0, regime_ok=True)
+    out = b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))  # TP at +3%
+    reg = [t for t in out if t.kind == "regime"]
+    assert len(reg) == 1 and reg[0].reason == "TP" and reg[0].exit_price == 103.0
+    assert len(b.regime_trades) == 1 and not b.regimes        # closed, list emptied
+
+
+def test_regime_shadow_survives_snapshot_restore():
+    import json
+    b = PaperBook(); b.enter("BTC/USDT", "LONG", 100.0, ts=5, regime_ok=True)
+    snap = json.loads(json.dumps(b.snapshot()))
+    b2 = PaperBook(); b2.restore(snap)
+    assert len(b2.regimes) == 1 and b2.regimes[0].entry_price == 100.0

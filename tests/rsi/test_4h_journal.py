@@ -81,3 +81,17 @@ def test_ladder_counter_and_summary():
     assert j.ladder_trades == 2 and abs(j.ladder_net - 220.0) < 1e-9
     s = j.summary_line()
     assert "ladder" in s and "+120" in s   # ladder Δ vs live = 220 - 100 = +120
+
+
+def test_regime_counter_summary_and_state_roundtrip(tmp_path):
+    sp = tmp_path / "s.json"
+    j = Journal(state_path=sp); b = PaperBook()
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 100.0})
+    j.record("EXIT", {"kind": "regime", "pnl": 180.0})
+    j.record("EXIT", {"kind": "regime", "pnl": -30.0})
+    assert j.regime_trades == 2 and j.regime_wins == 1 and abs(j.regime_net - 150.0) < 1e-9
+    s = j.summary_line()
+    assert "regime" in s and "+50" in s    # regime Δ vs live = 150 - 100 = +50
+    j.save_state(b, last_ts={})
+    j2 = Journal(state_path=sp); b2 = PaperBook(); j2.load_state(b2)
+    assert j2.regime_trades == 2 and abs(j2.regime_net - 150.0) < 1e-9

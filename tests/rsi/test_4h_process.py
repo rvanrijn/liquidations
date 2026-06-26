@@ -62,3 +62,30 @@ def test_entry_event_includes_tp_sl(monkeypatch, tmp_path):
     evs = [json.loads(l) for l in (tmp_path / "e.jsonl").read_text().splitlines()]
     entry = [e for e in evs if e["event"] == "ENTRY"][0]
     assert abs(entry["tp"] - 103.0) < 1e-9 and abs(entry["sl"] - 98.0) < 1e-9  # +3% / -2%
+
+
+def test_regime_aligned_long_above_short_below():
+    from rsi_4h_forward import _regime_aligned, REGIME_EMA
+    up = list(range(1, REGIME_EMA + 50))           # steadily rising → price above EMA200
+    assert _regime_aligned("LONG", up) is True      # long with the uptrend → aligned
+    assert _regime_aligned("SHORT", up) is False    # short against uptrend → filtered out
+    down = list(range(REGIME_EMA + 50, 1, -1))      # steadily falling → price below EMA200
+    assert _regime_aligned("SHORT", down) is True
+    assert _regime_aligned("LONG", down) is False
+
+
+def test_regime_aligned_needs_enough_bars():
+    from rsi_4h_forward import _regime_aligned
+    assert _regime_aligned("LONG", [100, 101, 102]) is False   # too short to judge → not aligned
+
+
+def test_aligned_break_opens_regime_shadow(monkeypatch):
+    import rsi_4h_forward as m
+    # rising series so a LONG break is trend-aligned
+    cs = [candle(i, lo=100 + i, hi=102 + i, close=101 + i) for i in range(260)]
+    monkeypatch.setattr(m, "latest_break",
+        lambda c: {"side": "LONG", "ts": c[-1][0], "close": c[-1][4],
+                   "rsi": 40.0, "tl": 36.0, "cleared_by": 4.0})
+    b = PaperBook(); j = Journal()
+    process_asset("BTC/USDT", cs, b, j, {})
+    assert len(b.regimes) == 1                      # aligned long → regime shadow opened
