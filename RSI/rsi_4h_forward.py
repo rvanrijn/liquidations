@@ -418,6 +418,61 @@ def replay(asset, days):
     print(f"{asset} replay {days}d: {j.summary_line()}")
 
 
+# ─── Trade export (per-trade spreadsheet of the full backtest) ────────────────
+
+EXPORT_COLS = ["n", "asset", "side", "entry_time", "entry_price", "tp_price", "sl_price",
+               "exit_time", "exit_price", "reason", "bars_held", "hold_hours",
+               "gross_move_pct", "net_return_pct", "pnl_usd", "cum_equity_usd", "win"]
+
+
+def _trade_rows(trades, start_equity=CAPITAL):
+    """Pure: ClosedTrades (any assets) → chronological export rows with running
+    equity. Recomputes the TP/SL bracket and gross price move from the levels;
+    uses the trade's net `ret`/`pnl` (already fee-adjusted) for P&L and equity."""
+    from datetime import datetime, timezone
+    def iso(t): return datetime.fromtimestamp(t / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    ms = 4 * 3600 * 1000
+    rows = []; eq = start_equity
+    for n, t in enumerate(sorted(trades, key=lambda x: x.entry_ts), 1):
+        tp = t.entry_price * (1 + TP_PCT) if t.side == "LONG" else t.entry_price * (1 - TP_PCT)
+        sl = t.entry_price * (1 - STOP_PCT) if t.side == "LONG" else t.entry_price * (1 + STOP_PCT)
+        gross = (t.exit_price / t.entry_price - 1) if t.side == "LONG" else (t.entry_price / t.exit_price - 1)
+        bars = round((t.exit_ts - t.entry_ts) / ms)
+        eq += t.pnl
+        rows.append({"n": n, "asset": t.asset, "side": t.side,
+                     "entry_time": iso(t.entry_ts), "entry_price": round(t.entry_price, 2),
+                     "tp_price": round(tp, 2), "sl_price": round(sl, 2),
+                     "exit_time": iso(t.exit_ts), "exit_price": round(t.exit_price, 2),
+                     "reason": t.reason, "bars_held": bars, "hold_hours": bars * 4,
+                     "gross_move_pct": round(gross * 100, 3), "net_return_pct": round(t.ret * 100, 3),
+                     "pnl_usd": round(t.pnl, 2), "cum_equity_usd": round(eq, 2),
+                     "win": 1 if t.pnl > 0 else 0})
+    return rows
+
+
+def export_trades(assets=ASSETS, days=0, out="RSI/data/rsi_4h_trades.csv"):
+    """Recompute the full BTC+ETH 4h backtest and dump every live trade to CSV
+    (opens directly in Excel). days=0 → full history; else last N days by entry."""
+    import csv
+    trades = []
+    for a in assets:
+        trades += _strategy_trades(a)
+    if days:
+        cutoff = (_time.time() - days * 86400) * 1000
+        trades = [t for t in trades if t.entry_ts >= cutoff]
+    rows = _trade_rows(trades)
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    with open(out, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=EXPORT_COLS)
+        w.writeheader(); w.writerows(rows)
+    if not rows:
+        print(f"no trades in window → {out}"); return
+    wins = sum(r["win"] for r in rows); net = sum(r["pnl_usd"] for r in rows)
+    print(f"wrote {len(rows)} trades → {out}")
+    print(f"  {' + '.join(a.split('/')[0] for a in assets)}  |  win {wins}/{len(rows)} "
+          f"({wins / len(rows) * 100:.0f}%)  |  net ${net:+,.0f}  |  end equity ${rows[-1]['cum_equity_usd']:,.0f}")
+
+
 # ─── Decay-line check (is the BTC 4h edge still alive, or past its worst-ever DD?) ──
 
 def _decay_status(eq, tt, now_ms, line_days):
@@ -621,18 +676,20 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
 
 def main():
     p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
-    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash", "notify-test"], nargs="?", default="once")
+    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash", "notify-test", "export"], nargs="?", default="once")
     p.add_argument("--asset", default="BTC/USDT")
-    p.add_argument("--days", type=int, default=120)
+    p.add_argument("--days", type=int, default=0, help="window in days; 0 = full history (replay falls back to 120)")
+    p.add_argument("--out", default="RSI/data/rsi_4h_trades.csv", help="export CSV path")
     a = p.parse_args()
     if a.mode == "run": run_loop()
+    elif a.mode == "export": export_trades(days=a.days, out=a.out)
     elif a.mode == "notify-test":
         if not os.environ.get("RSI_TG_TOKEN") or not os.environ.get("RSI_TG_CHAT"):
             print("RSI_TG_TOKEN / RSI_TG_CHAT not set — export both, then re-run notify-test"); return
         sample = {"asset": "BTC/USDT", "side": "LONG", "price": 62400, "tp": 64272, "sl": 61152}
         print("sent ✓" if telegram_notify(_format_entry_msg(sample)) else "send failed — check token/chat id")
     elif a.mode == "dash": render_dash()
-    elif a.mode == "replay": replay(a.asset, a.days)
+    elif a.mode == "replay": replay(a.asset, a.days or 120)
     elif a.mode == "status":
         b = PaperBook(); j = Journal(state_path="RSI/data/rsi_4h_state.json")
         j.load_state(b); print(j.summary_line())
