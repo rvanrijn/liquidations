@@ -6,7 +6,10 @@ entry at the break bar close, TP+3% / -2% stop / 8-day (48-bar) cap; logs a
 hold-48 shadow alongside. See docs/superpowers/specs/2026-06-26-rsi-4h-forward-test-design.md
 """
 
+import argparse
 import json
+import os
+import time as _time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -238,3 +241,66 @@ def process_asset(asset, candles, book, journal, last_ts):
                                          "price": sig["close"], "ts": sig["ts"]})
     last_ts[asset] = latest[0]
     return last_ts
+
+
+# ─── Fetch + CLI ──────────────────────────────────────────────────────────────
+
+def fetch_closed(asset, bars=SEED_BARS):
+    """Fetch ~bars closed 4h candles. fetch_ohlcv is since-paged; drop the
+    in-progress final candle (its close time is in the future)."""
+    since = int((_time.time() - bars * 4 * 3600) * 1000)
+    raw = fetch_ohlcv(asset, TIMEFRAME, since)
+    now_ms = _time.time() * 1000
+    return [c for c in raw if c[0] + 4 * 3600 * 1000 <= now_ms]   # fully closed only
+
+
+def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state.json"):
+    os.makedirs("RSI/data", exist_ok=True)
+    book = PaperBook(); j = Journal(events_path=events, state_path=state)
+    last_ts = j.load_state(book)
+    for asset in ASSETS:
+        try:
+            candles = fetch_closed(asset)
+        except Exception as e:                      # noqa: BLE001 — skip poll, keep state
+            print(f"fetch failed {asset}: {e}"); continue
+        last_ts = process_asset(asset, candles, book, j, last_ts)
+    j.save_state(book, last_ts)
+    print(j.summary_line())
+
+
+def run_loop():
+    while True:
+        run_once()
+        now = _time.time(); nxt = (now // (4 * 3600) + 1) * 4 * 3600 + 30
+        _time.sleep(max(60, nxt - now))
+
+
+def replay(asset, days):
+    """Offline: drive process_asset bar-by-bar over historical 4h candles and
+    print realized vs shadow net — reconcile against the backtest TP+3% cell."""
+    since = int((_time.time() - days * 86400) * 1000)
+    raw = [c for c in fetch_ohlcv(asset, TIMEFRAME, since)]
+    book = PaperBook(); j = Journal(); last = {}
+    for k in range(30, len(raw)):
+        last = process_asset(asset, raw[:k + 1], book, j, last)
+    print(f"{asset} replay {days}d: {j.summary_line()}")
+
+
+def main():
+    p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
+    p.add_argument("mode", choices=["once", "run", "replay", "status"], nargs="?", default="once")
+    p.add_argument("--asset", default="BTC/USDT")
+    p.add_argument("--days", type=int, default=120)
+    a = p.parse_args()
+    if a.mode == "run": run_loop()
+    elif a.mode == "replay": replay(a.asset, a.days)
+    elif a.mode == "status":
+        b = PaperBook(); j = Journal(state_path="RSI/data/rsi_4h_state.json")
+        j.load_state(b); print(j.summary_line())
+    else: run_once()
+
+
+if __name__ == "__main__":
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    main()
