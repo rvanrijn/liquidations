@@ -587,6 +587,8 @@ def process_asset(asset, candles, book, journal, last_ts):
 ```
 Note: `journal.record("SKIP", …)` increments `j.skips`; `book.enter` is only called when flat, so the book's own `skips` stays 0 in normal flow (the SKIP path never calls `enter`). The Journal is the source of truth for the skip count.
 
+**Event-naming note:** the live and shadow legs both close via the same `EXIT` event, distinguished by `kind` (`"live"` / `"shadow"`) — there is no separate `SHADOW` event type, and the counters key off `kind`. The spec's `GAP` event is **optional/informational**: gap *handling* is already covered by `process_asset` advancing exits over all new bars; emit a `GAP` record only if you want to mark downtime, otherwise skip it (no counter depends on it).
+
 - [ ] **Step 4: Run — expect PASS** (4 passed); then `python -m pytest tests/rsi/ -q`
 - [ ] **Step 5: Commit**
 ```bash
