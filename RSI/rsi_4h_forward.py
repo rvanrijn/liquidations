@@ -420,43 +420,52 @@ def replay(asset, days):
 
 # ─── Trade export (per-trade spreadsheet of the full backtest) ────────────────
 
-EXPORT_COLS = ["n", "asset", "side", "entry_time", "entry_price", "tp_price", "sl_price",
+EXPORT_COLS = ["n", "asset", "side", "kind", "entry_time", "entry_price", "tp_price", "sl_price",
                "exit_time", "exit_price", "reason", "bars_held", "hold_hours",
                "gross_move_pct", "net_return_pct", "pnl_usd", "cum_equity_usd", "win"]
 
 
 def _trade_rows(trades, start_equity=CAPITAL):
-    """Pure: ClosedTrades (any assets) → chronological export rows with running
-    equity. Recomputes the TP/SL bracket and gross price move from the levels;
-    uses the trade's net `ret`/`pnl` (already fee-adjusted) for P&L and equity."""
+    """Pure: ClosedTrades (any assets/kinds) → chronological export rows. Each exit
+    rule (live / shadow / ladder) gets its OWN running equity track — they're parallel
+    backtests on the same capital, not additive. Recomputes the TP/SL bracket and gross
+    move from the levels; uses the trade's net `ret`/`pnl` (fee-adjusted) for P&L. The
+    ladder exits in two legs so it has no single exit price → those fields are blank."""
     from datetime import datetime, timezone
     def iso(t): return datetime.fromtimestamp(t / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
     ms = 4 * 3600 * 1000
-    rows = []; eq = start_equity
+    rows = []; eq = {}        # kind -> running equity
     for n, t in enumerate(sorted(trades, key=lambda x: x.entry_ts), 1):
         tp = t.entry_price * (1 + TP_PCT) if t.side == "LONG" else t.entry_price * (1 - TP_PCT)
         sl = t.entry_price * (1 - STOP_PCT) if t.side == "LONG" else t.entry_price * (1 + STOP_PCT)
-        gross = (t.exit_price / t.entry_price - 1) if t.side == "LONG" else (t.entry_price / t.exit_price - 1)
         bars = round((t.exit_ts - t.entry_ts) / ms)
-        eq += t.pnl
-        rows.append({"n": n, "asset": t.asset, "side": t.side,
+        eq[t.kind] = eq.get(t.kind, start_equity) + t.pnl
+        if t.kind == "ladder":          # two-leg scale-out: no single exit price/move
+            exit_price = gross = ""
+        else:
+            exit_price = round(t.exit_price, 2)
+            g = (t.exit_price / t.entry_price - 1) if t.side == "LONG" else (t.entry_price / t.exit_price - 1)
+            gross = round(g * 100, 3)
+        rows.append({"n": n, "asset": t.asset, "side": t.side, "kind": t.kind,
                      "entry_time": iso(t.entry_ts), "entry_price": round(t.entry_price, 2),
                      "tp_price": round(tp, 2), "sl_price": round(sl, 2),
-                     "exit_time": iso(t.exit_ts), "exit_price": round(t.exit_price, 2),
+                     "exit_time": iso(t.exit_ts), "exit_price": exit_price,
                      "reason": t.reason, "bars_held": bars, "hold_hours": bars * 4,
-                     "gross_move_pct": round(gross * 100, 3), "net_return_pct": round(t.ret * 100, 3),
-                     "pnl_usd": round(t.pnl, 2), "cum_equity_usd": round(eq, 2),
+                     "gross_move_pct": gross, "net_return_pct": round(t.ret * 100, 3),
+                     "pnl_usd": round(t.pnl, 2), "cum_equity_usd": round(eq[t.kind], 2),
                      "win": 1 if t.pnl > 0 else 0})
     return rows
 
 
-def export_trades(assets=ASSETS, days=0, out="RSI/data/rsi_4h_trades.csv"):
-    """Recompute the full BTC+ETH 4h backtest and dump every live trade to CSV
-    (opens directly in Excel). days=0 → full history; else last N days by entry."""
+def export_trades(assets=ASSETS, days=0, out="RSI/data/rsi_4h_trades.csv", shadows=False):
+    """Recompute the full BTC+ETH 4h backtest and dump every trade to CSV (opens
+    directly in Excel). days=0 → full history; else last N days by entry. With
+    shadows=True, also includes the hold-48 and scale-out ladder exit rules, each
+    tagged in the `kind` column with its own equity track."""
     import csv
     trades = []
     for a in assets:
-        trades += _strategy_trades(a)
+        trades += _strategy_trades(a, include_shadows=shadows)
     if days:
         cutoff = (_time.time() - days * 86400) * 1000
         trades = [t for t in trades if t.entry_ts >= cutoff]
@@ -467,10 +476,15 @@ def export_trades(assets=ASSETS, days=0, out="RSI/data/rsi_4h_trades.csv"):
         w.writeheader(); w.writerows(rows)
     if not rows:
         print(f"no trades in window → {out}"); return
-    wins = sum(r["win"] for r in rows); net = sum(r["pnl_usd"] for r in rows)
-    print(f"wrote {len(rows)} trades → {out}")
-    print(f"  {' + '.join(a.split('/')[0] for a in assets)}  |  win {wins}/{len(rows)} "
-          f"({wins / len(rows) * 100:.0f}%)  |  net ${net:+,.0f}  |  end equity ${rows[-1]['cum_equity_usd']:,.0f}")
+    print(f"wrote {len(rows)} trades → {out}  ({' + '.join(a.split('/')[0] for a in assets)})")
+    for kind in ("live", "shadow", "ladder"):                 # per exit-rule summary
+        kr = [r for r in rows if r["kind"] == kind]
+        if not kr:
+            continue
+        wins = sum(r["win"] for r in kr); net = sum(r["pnl_usd"] for r in kr)
+        label = {"live": "live · TP+3/−2/8d", "shadow": "shadow · hold-48", "ladder": "shadow · scale-out"}[kind]
+        print(f"  {label:<22} {len(kr):>4} trades  {wins / len(kr) * 100:>3.0f}% win"
+              f"  net ${net:>+9,.0f}  end eq ${kr[-1]['cum_equity_usd']:,.0f}")
 
 
 # ─── Decay-line check (is the BTC 4h edge still alive, or past its worst-ever DD?) ──
@@ -489,9 +503,10 @@ def _decay_status(eq, tt, now_ms, line_days):
     return days, False, f"drawdown {days:.0f}/{line_days}d ({line_days - days:.0f}d to line)"
 
 
-def _strategy_trades(asset, years_back=9):
+def _strategy_trades(asset, years_back=9, include_shadows=False):
     """Recompute the asset's full 4h strategy track record from market data, driving
-    the SAME PaperBook exit logic the live trader uses. Returns the live ClosedTrades."""
+    the SAME PaperBook exit logic the live trader uses. Returns the live ClosedTrades,
+    plus the hold-48 + scale-out ladder shadow trades when include_shadows=True."""
     since = int((_time.time() - years_back * 365 * 86400) * 1000)
     c = fetch_ohlcv(asset, TIMEFRAME, since)
     closes = np.array([x[4] for x in c], dtype=float)
@@ -510,6 +525,8 @@ def _strategy_trades(asset, years_back=9):
         book.advance(asset, {"ts": row[0], "high": row[2], "low": row[3], "close": row[4]})
         if idx in sig and not book.in_position(asset):
             book.enter(asset, sig[idx], row[4], row[0])
+    if include_shadows:
+        return book.live_trades + book.shadow_trades + book.ladder_trades
     return book.live_trades
 
 
@@ -680,9 +697,10 @@ def main():
     p.add_argument("--asset", default="BTC/USDT")
     p.add_argument("--days", type=int, default=0, help="window in days; 0 = full history (replay falls back to 120)")
     p.add_argument("--out", default="RSI/data/rsi_4h_trades.csv", help="export CSV path")
+    p.add_argument("--shadows", action="store_true", help="export: also include hold-48 + scale-out ladder trades")
     a = p.parse_args()
     if a.mode == "run": run_loop()
-    elif a.mode == "export": export_trades(days=a.days, out=a.out)
+    elif a.mode == "export": export_trades(days=a.days, out=a.out, shadows=a.shadows)
     elif a.mode == "notify-test":
         if not os.environ.get("RSI_TG_TOKEN") or not os.environ.get("RSI_TG_CHAT"):
             print("RSI_TG_TOKEN / RSI_TG_CHAT not set — export both, then re-run notify-test"); return

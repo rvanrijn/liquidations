@@ -8,8 +8,8 @@ DAY = 86_400_000
 H4 = 4 * 3600 * 1000
 
 
-def _t(asset, side, ep, xp, e_ts, x_ts, reason, ret, pnl):
-    return ClosedTrade(asset, side, ep, xp, e_ts, x_ts, reason, ret, pnl, "live")
+def _t(asset, side, ep, xp, e_ts, x_ts, reason, ret, pnl, kind="live"):
+    return ClosedTrade(asset, side, ep, xp, e_ts, x_ts, reason, ret, pnl, kind)
 
 
 def test_rows_have_all_columns_and_running_equity():
@@ -52,3 +52,28 @@ def test_rows_sorted_by_entry_time():
     ]
     rows = _trade_rows(trades)
     assert rows[0]["asset"] == "ETH/USDT" and rows[1]["asset"] == "BTC/USDT"   # earlier entry first
+
+
+def test_kind_column_default_live():
+    r = _trade_rows([_t("BTC/USDT", "LONG", 100.0, 103.0, 0, 5 * H4, "TP", 0.03, 150.0)])[0]
+    assert r["kind"] == "live"
+
+
+def test_each_kind_has_its_own_equity_track():
+    # live + hold-48 + ladder on the same signal → three independent equity curves
+    trades = [
+        _t("BTC/USDT", "LONG", 100.0, 103.0, 0, 5 * H4, "TP", 0.03, 150.0, kind="live"),
+        _t("BTC/USDT", "LONG", 100.0, 110.0, 0, 48 * H4, "HOLD", 0.10, 500.0, kind="shadow"),
+        _t("BTC/USDT", "LONG", 100.0, 100.0, 0, 30 * H4, "CAP", 0.055, 275.0, kind="ladder"),
+    ]
+    eq = {r["kind"]: r["cum_equity_usd"] for r in _trade_rows(trades)}
+    assert eq["live"] == CAPITAL + 150.0       # each starts from CAPITAL, not additive
+    assert eq["shadow"] == CAPITAL + 500.0
+    assert eq["ladder"] == CAPITAL + 275.0
+
+
+def test_ladder_blanks_exit_price_and_gross():
+    # ladder books exit_price == entry_price (two-leg) → those cells are blank, net carries P&L
+    r = _trade_rows([_t("BTC/USDT", "LONG", 100.0, 100.0, 0, 30 * H4, "CAP", 0.055, 275.0, kind="ladder")])[0]
+    assert r["exit_price"] == "" and r["gross_move_pct"] == ""
+    assert abs(r["net_return_pct"] - 5.5) < 1e-6 and r["pnl_usd"] == 275.0
