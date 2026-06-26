@@ -4,6 +4,21 @@
 Trades the OOS+drift-validated config: every break (no EMA200 filter), taker
 entry at the break bar close, TP+3% / -2% stop / 8-day (48-bar) cap; logs a
 hold-48 shadow alongside. See docs/superpowers/specs/2026-06-26-rsi-4h-forward-test-design.md
+
+Usage:
+  python RSI/rsi_4h_forward.py once     # single poll (deploy on a 4h cron)
+  python RSI/rsi_4h_forward.py run      # loop, sleeping to each 4h close
+  python RSI/rsi_4h_forward.py status   # print accumulated stats from state
+  python RSI/rsi_4h_forward.py replay --asset ETH/USDT --days 365   # offline reconcile
+
+State + log live in RSI/data/ (gitignored):
+  rsi_4h_events.jsonl  — every SIGNAL/ENTRY/EXIT/SKIP
+  rsi_4h_state.json    — open positions, shadows, counters, last-processed bar ts
+
+Headline metric = live TP+3% net + win rate; the hold-48 shadow net sits beside
+it (would "let it run" have beaten the bracket?). One position per asset — breaks
+firing while in a position are logged as SKIP. BTC + ETH only (SOL/BNB failed
+validation). Deploy via cron (`once` every 4h) or a long-running `run` loop.
 """
 
 import argparse
