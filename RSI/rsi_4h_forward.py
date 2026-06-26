@@ -41,6 +41,8 @@ CAP_BARS = 48          # 8-day live cap (and shadow hold horizon)
 FEE = 0.0002           # 0.02%/side taker
 CAPITAL = 5000.0       # notional per trade
 SEED_BARS = 300        # candles to fetch per poll (RSI warmup + recent pivots)
+DECAY_LINE_DAYS = 394  # BTC's worst historical equity drawdown lasted 394d then recovered;
+                       # a current BTC drawdown beyond this (no new equity high) = likely decay
 
 
 def latest_break(candles):
@@ -312,6 +314,58 @@ def replay(asset, days):
     print(f"{asset} replay {days}d: {j.summary_line()}")
 
 
+# ─── Decay-line check (is the BTC 4h edge still alive, or past its worst-ever DD?) ──
+
+def _decay_status(eq, tt, now_ms, line_days):
+    """Pure: given a strategy equity curve `eq` at trade-exit times `tt` (ms),
+    classify the current drawdown vs the historical-max-recovery line.
+    Returns (days_underwater, crossed: bool, message)."""
+    ath_i = int(np.argmax(eq))
+    if eq[-1] >= eq[ath_i] - 1e-9:
+        return 0.0, False, "at equity highs — edge healthy"
+    days = (now_ms - tt[ath_i]) / 86_400_000.0
+    if days > line_days:
+        return days, True, (f"DECAY LINE CROSSED — {days:.0f}d underwater > {line_days}d "
+                            f"historical max; consider standing down")
+    return days, False, f"drawdown {days:.0f}/{line_days}d ({line_days - days:.0f}d to line)"
+
+
+def _strategy_trades(asset, years_back=9):
+    """Recompute the asset's full 4h strategy track record from market data, driving
+    the SAME PaperBook exit logic the live trader uses. Returns the live ClosedTrades."""
+    since = int((_time.time() - years_back * 365 * 86400) * 1000)
+    c = fetch_ohlcv(asset, TIMEFRAME, since)
+    closes = np.array([x[4] for x in c], dtype=float)
+    rsi = calculate_rsi(closes)
+    highs, lows = find_pivots(rsi)
+    hi = [p[0] for p in highs]; li = [p[0] for p in lows]
+    sig = {}; ph = pl = 0
+    for idx in range(1, len(closes)):
+        while ph < len(highs) and hi[ph] <= idx - 3: ph += 1
+        while pl < len(lows) and li[pl] <= idx - 3: pl += 1
+        bt, _bv = detect_break(rsi, highs[:ph], lows[:pl], idx)
+        if bt:
+            sig[idx] = "LONG" if bt == "bullish_break" else "SHORT"
+    book = PaperBook()
+    for idx, row in enumerate(c):
+        book.advance(asset, {"ts": row[0], "high": row[2], "low": row[3], "close": row[4]})
+        if idx in sig and not book.in_position(asset):
+            book.enter(asset, sig[idx], row[4], row[0])
+    return book.live_trades
+
+
+def decay_check(asset="BTC/USDT", line_days=DECAY_LINE_DAYS):
+    """One-line decay verdict for `asset`, recomputed live from market data."""
+    trades = _strategy_trades(asset)
+    if len(trades) < 30:
+        return f"{asset} 4h strategy: too few trades to assess"
+    tt = np.array([t.exit_ts for t in trades])
+    eq = CAPITAL + np.cumsum(np.array([t.pnl for t in trades]))
+    _days, crossed, msg = _decay_status(eq, tt, _time.time() * 1000, line_days)
+    flag = "⚠ " if crossed else ""
+    return f"{flag}{asset} 4h strategy ({len(trades)} trades, eq ${eq[-1]:,.0f}): {msg}"
+
+
 def main():
     p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
     p.add_argument("mode", choices=["once", "run", "replay", "status"], nargs="?", default="once")
@@ -323,6 +377,10 @@ def main():
     elif a.mode == "status":
         b = PaperBook(); j = Journal(state_path="RSI/data/rsi_4h_state.json")
         j.load_state(b); print(j.summary_line())
+        try:                                            # live decay-line check (needs network)
+            print(decay_check("BTC/USDT"))
+        except Exception as e:                          # noqa: BLE001 — offline status still works
+            print(f"(decay check skipped — {e})")
     else: run_once()
 
 
