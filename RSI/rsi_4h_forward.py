@@ -229,8 +229,10 @@ class Journal:
 
     def summary_line(self):
         wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
+        gap = self.shadow_net - self.live_net   # how much MORE "let it run" made vs live TP+3
         line = (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
-                f"  | shadow hold48 ${self.shadow_net:+,.0f}  skipped {self.skips}")
+                f"  | shadow hold48 ${self.shadow_net:+,.0f}"
+                f"  (let-run edge Δ ${gap:+,.0f})  skipped {self.skips}")
         for asset, a in sorted(self.by_asset.items()):
             awr = (a["wins"] / a["trades"] * 100) if a["trades"] else 0.0
             line += (f"\n    {asset:<10} {a['trades']:>3} trades  {awr:>3.0f}% win"

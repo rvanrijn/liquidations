@@ -63,3 +63,11 @@ def test_exit_without_asset_still_works():
     j = Journal()
     j.record("EXIT", {"kind": "live", "pnl": 120.0})
     assert j.live_trades == 1 and j.by_asset == {}
+
+
+def test_summary_shows_shadow_minus_live_gap():
+    j = Journal()
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 100.0})
+    j.record("EXIT", {"kind": "shadow", "asset": "BTC/USDT", "pnl": 380.0})
+    s = j.summary_line()
+    assert "let-run edge" in s and "+280" in s   # gap = shadow 380 - live 100
