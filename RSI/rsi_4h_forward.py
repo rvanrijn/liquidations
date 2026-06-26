@@ -6,6 +6,7 @@ entry at the break bar close, TP+3% / -2% stop / 8-day (48-bar) cap; logs a
 hold-48 shadow alongside. See docs/superpowers/specs/2026-06-26-rsi-4h-forward-test-design.md
 """
 
+import json
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -148,3 +149,59 @@ class PaperBook:
                           for a, d in snap.get("positions", {}).items()}
         self.shadows = [Shadow(**d) for d in snap.get("shadows", [])]
         self.skips = snap.get("skips", 0)
+
+
+# ─── Journal ─────────────────────────────────────────────────────────────────
+
+class Journal:
+    """Append-only JSONL events + counters + state file (book snapshot + last_ts)."""
+
+    def __init__(self, events_path=None, state_path=None):
+        self.events_path = events_path; self.state_path = state_path
+        self.live_trades = self.live_wins = 0; self.live_net = 0.0
+        self.shadow_trades = self.shadow_wins = 0; self.shadow_net = 0.0
+        self.skips = 0
+
+    def record(self, event, data):
+        if event == "EXIT":
+            if data.get("kind") == "live":
+                self.live_trades += 1; self.live_net += data["pnl"]
+                if data["pnl"] > 0: self.live_wins += 1
+            elif data.get("kind") == "shadow":
+                self.shadow_trades += 1; self.shadow_net += data["pnl"]
+                if data["pnl"] > 0: self.shadow_wins += 1
+        elif event == "SKIP":
+            self.skips += 1
+        if self.events_path is not None:
+            with open(self.events_path, "a") as f:
+                f.write(json.dumps({"event": event, **data}) + "\n")
+
+    def _counters(self):
+        return {"live_trades": self.live_trades, "live_wins": self.live_wins,
+                "live_net": self.live_net, "shadow_trades": self.shadow_trades,
+                "shadow_wins": self.shadow_wins, "shadow_net": self.shadow_net,
+                "skips": self.skips}
+
+    def save_state(self, book, last_ts):
+        if self.state_path is None: return
+        with open(self.state_path, "w") as f:
+            json.dump({"book": book.snapshot(), "counters": self._counters(),
+                       "last_ts": last_ts}, f)
+
+    def load_state(self, book):
+        """Restore counters into self and book state into `book`. Returns last_ts dict."""
+        if self.state_path is None: return {}
+        try:
+            with open(self.state_path) as f:
+                st = json.load(f)
+        except FileNotFoundError:
+            return {}
+        c = st.get("counters", {})
+        for k, v in c.items(): setattr(self, k, v)
+        book.restore(st.get("book", {}))
+        return st.get("last_ts", {})
+
+    def summary_line(self):
+        wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
+        return (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
+                f"  | shadow hold48 ${self.shadow_net:+,.0f}  skipped {self.skips}")
