@@ -47,9 +47,20 @@ Out of scope (YAGNI): EMA200/any entry filter, leverage, SOL/BNB, live order exe
 
 A single new file `RSI/rsi_4h_forward.py`, reusing `find_pivots`/`detect_break`/
 `calculate_rsi` from `RSI/rsi_dashboard.py`, `fetch_ohlcv` from `RSI/rsi_backtest.py`,
-and the `Journal` pattern from `RSI/rsi_paper.py`. Because 4h entries are deterministic
+and the `Journal` *pattern* from `RSI/rsi_paper.py`. Because 4h entries are deterministic
 bar-close fills, there is **no websocket and no resting-order/fill machinery** — the tool
 just checks each 4h close. Four focused, independently testable units:
+
+**Reuse caveats (correctness-critical — verified in spec review):**
+- `calculate_rsi` MUST be imported from `rsi_dashboard.py`, **not** `rsi_backtest.py` —
+  the two implementations differ in seeding/indexing, and `find_pivots`/`detect_break`
+  were validated against the dashboard's. Using the wrong one breaks signal fidelity.
+- `fetch_ohlcv(symbol, timeframe, since_ms)` is paginated by **`since_ms`**, not a
+  `limit`. "Fetch the last ~300 closed 4h candles" means `since_ms = now − ~300×4h`.
+- The reused `Journal` is the **pattern** (append-only JSONL + JSON state file + summary
+  line), not the class verbatim — its maker-fill counters (`entry_arms`, `exit_fills`,
+  `missed_exit_to_stop`) don't apply. Write new counters for SIGNAL/ENTRY/EXIT/SKIP/
+  SHADOW/GAP.
 
 | Unit | Responsibility | Depends on |
 |---|---|---|
