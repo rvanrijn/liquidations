@@ -221,6 +221,37 @@ class PaperBook:
         self.skips = snap.get("skips", 0)
 
 
+# ─── Telegram push (live signal alerts) ──────────────────────────────────────
+
+def telegram_notify(text):
+    """Best-effort Telegram push. No-op (returns False) unless BOTH RSI_TG_TOKEN
+    and RSI_TG_CHAT are set in the env. Never raises — a notification failure must
+    not interrupt a poll. Uses stdlib urllib so the core stays dependency-free."""
+    token = os.environ.get("RSI_TG_TOKEN"); chat = os.environ.get("RSI_TG_CHAT")
+    if not token or not chat:
+        return False
+    import urllib.request, urllib.parse
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+    try:
+        with urllib.request.urlopen(url, data=payload, timeout=10) as r:
+            return r.status == 200
+    except Exception as e:                          # noqa: BLE001 — never crash a poll
+        print(f"telegram notify failed: {e}")
+        return False
+
+
+def _format_entry_msg(d):
+    """Render an ENTRY event dict into a phone-friendly Telegram message."""
+    side = d.get("side", "?"); emoji = "🟢" if side == "LONG" else "🔴"
+    asset = d.get("asset", "?").split("/")[0]
+    price = d.get("price", 0); tp = d.get("tp", 0); sl = d.get("sl", 0)
+    return (f"{emoji} RSI 4h · {asset} {side}\n"
+            f"entry  {price:,.2f}\n"
+            f"TP  {tp:,.2f}  (+{TP_PCT*100:.0f}%)\n"
+            f"SL  {sl:,.2f}  (−{STOP_PCT*100:.0f}%)")
+
+
 # ─── Journal ─────────────────────────────────────────────────────────────────
 
 class Journal:
@@ -233,6 +264,7 @@ class Journal:
         self.ladder_trades = self.ladder_wins = 0; self.ladder_net = 0.0
         self.skips = 0
         self.by_asset = {}     # asset -> {"trades","wins","net"} for the LIVE leg
+        self.notify_entries = False   # live runner sets True; replay/status/dash stay silent
 
     def record(self, event, data):
         if event == "EXIT":
@@ -255,6 +287,8 @@ class Journal:
         if self.events_path is not None:
             with open(self.events_path, "a") as f:
                 f.write(json.dumps({"event": event, **data}) + "\n")
+        if event == "ENTRY" and self.notify_entries:
+            telegram_notify(_format_entry_msg(data))
 
     def _counters(self):
         return {"live_trades": self.live_trades, "live_wins": self.live_wins,
@@ -345,6 +379,7 @@ def fetch_closed(asset, bars=SEED_BARS):
 def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state.json"):
     os.makedirs("RSI/data", exist_ok=True)
     book = PaperBook(); j = Journal(events_path=events, state_path=state)
+    j.notify_entries = True          # push a Telegram alert on each new live entry
     last_ts = j.load_state(book)
     for asset in ASSETS:
         try:
@@ -577,11 +612,16 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
 
 def main():
     p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
-    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash"], nargs="?", default="once")
+    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash", "notify-test"], nargs="?", default="once")
     p.add_argument("--asset", default="BTC/USDT")
     p.add_argument("--days", type=int, default=120)
     a = p.parse_args()
     if a.mode == "run": run_loop()
+    elif a.mode == "notify-test":
+        if not os.environ.get("RSI_TG_TOKEN") or not os.environ.get("RSI_TG_CHAT"):
+            print("RSI_TG_TOKEN / RSI_TG_CHAT not set — export both, then re-run notify-test"); return
+        sample = {"asset": "BTC/USDT", "side": "LONG", "price": 62400, "tp": 64272, "sl": 61152}
+        print("sent ✓" if telegram_notify(_format_entry_msg(sample)) else "send failed — check token/chat id")
     elif a.mode == "dash": render_dash()
     elif a.mode == "replay": replay(a.asset, a.days)
     elif a.mode == "status":
