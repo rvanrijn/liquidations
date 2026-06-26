@@ -48,3 +48,17 @@ def test_break_while_in_position_logs_skip(monkeypatch):
     b.enter("BTC/USDT", "LONG", 100.0, ts=-1)
     process_asset("BTC/USDT", cs, b, j, {"BTC/USDT": -10})
     assert j.skips == 1 and b.in_position("BTC/USDT")
+
+
+def test_entry_event_includes_tp_sl(monkeypatch, tmp_path):
+    import json
+    import rsi_4h_forward as m
+    cs = [candle(i, 101, 99, 100) for i in range(40)]
+    monkeypatch.setattr(m, "latest_break",
+        lambda c: {"side": "LONG", "ts": c[-1][0], "close": 100.0,
+                   "rsi": 40.0, "tl": 36.0, "cleared_by": 4.0})
+    b = PaperBook(); j = Journal(events_path=tmp_path / "e.jsonl")
+    process_asset("BTC/USDT", cs, b, j, {})
+    evs = [json.loads(l) for l in (tmp_path / "e.jsonl").read_text().splitlines()]
+    entry = [e for e in evs if e["event"] == "ENTRY"][0]
+    assert abs(entry["tp"] - 103.0) < 1e-9 and abs(entry["sl"] - 98.0) < 1e-9  # +3% / -2%

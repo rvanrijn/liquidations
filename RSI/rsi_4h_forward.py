@@ -267,9 +267,10 @@ def process_asset(asset, candles, book, journal, last_ts):
             if book.in_position(asset):
                 journal.record("SKIP", {"asset": asset, "side": sig["side"], "ts": sig["ts"]})
             else:
-                book.enter(asset, sig["side"], sig["close"], sig["ts"])
+                pos = book.enter(asset, sig["side"], sig["close"], sig["ts"])
                 journal.record("ENTRY", {"asset": asset, "side": sig["side"],
-                                         "price": sig["close"], "ts": sig["ts"]})
+                                         "price": sig["close"], "tp": pos.tp_price,
+                                         "sl": pos.stop_price, "ts": sig["ts"]})
     last_ts[asset] = latest[0]
     return last_ts
 
@@ -458,6 +459,23 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
                   title=f"[{GREY}]decay watch · drawdown days vs the 394-day line[/]",
                   border_style=GREY, box=box.ROUNDED)
 
+    # open positions with their live entry / TP / SL
+    open_rows = []
+    for a, pos in book.positions.items():
+        if not pos:
+            continue
+        t = Text()
+        t.append(f"{a.split('/')[0]:<4} ", style="bold")
+        t.append(f"{pos.side:<5} ", style=EDGE if pos.side == "LONG" else FEE)
+        t.append(f"entry {pos.entry_price:>9,.0f}  ", style="white")
+        t.append(f"TP {pos.tp_price:>9,.0f}  ", style=EDGE)
+        t.append(f"SL {pos.stop_price:>9,.0f}  ", style=FEE)
+        t.append(f"{pos.bars}/{CAP_BARS}b ({(CAP_BARS - pos.bars) * 4}h left)", style="dim")
+        open_rows.append(t)
+    open_panel = Panel(Group(*open_rows) if open_rows else Text("flat — no open positions", style="dim"),
+                       title=f"[{GREY}]open positions · entry / TP+3% / SL−2%[/]",
+                       border_style=GREY, box=box.ROUNDED)
+
     evs = _recent_events(events)
     rt = Table(box=box.SIMPLE, expand=True, title="[dim]recent[/]", title_justify="left")
     for c, ju in [("time", "left"), ("event", "left"), ("asset", "left"), ("side", "left"), ("detail", "right")]:
@@ -469,7 +487,10 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
             detail = Text(f"${e.get('pnl', 0):+,.0f} {e.get('reason', '')}", style=sign(e.get("pnl", 0)))
             evstyle = sign(e.get("pnl", 0))
         elif ev == "ENTRY":
-            detail = Text(f"@ {e.get('price', 0):,.0f}"); evstyle = EDGE
+            txt = f"@ {e.get('price', 0):,.0f}"
+            if e.get("tp") and e.get("sl"):
+                txt += f"  TP {e['tp']:,.0f} / SL {e['sl']:,.0f}"
+            detail = Text(txt); evstyle = EDGE
         else:
             detail = Text("—"); evstyle = "dim"
         rt.add_row(t, Text(ev, style=evstyle), e.get("asset", ""), e.get("side", ""), detail)
@@ -477,6 +498,7 @@ def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_even
     con.print()
     con.rule(f"[bold]RSI 4h FORWARD TEST[/]  ·  BTC + ETH  ·  {datetime.now():%Y-%m-%d %H:%M}", style=BRASS)
     con.print(cards)
+    con.print(open_panel)
     con.print(at)
     con.print(decay)
     if evs:
