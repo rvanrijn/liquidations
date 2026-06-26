@@ -33,3 +33,33 @@ def test_state_roundtrip_with_book(tmp_path):
     assert last["BTC/USDT"] == 999
     assert b2.in_position("BTC/USDT")
     assert j2.live_trades == 1 and abs(j2.live_net - 50.0) < 1e-9
+
+
+def test_per_asset_split_tracks_live_contribution():
+    j = Journal()
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": -200.0})
+    j.record("EXIT", {"kind": "live", "asset": "BTC/USDT", "pnl": 50.0})
+    j.record("EXIT", {"kind": "live", "asset": "ETH/USDT", "pnl": 400.0})
+    j.record("EXIT", {"kind": "shadow", "asset": "BTC/USDT", "pnl": 999.0})  # shadow excluded
+    assert j.by_asset["BTC/USDT"]["trades"] == 2 and j.by_asset["BTC/USDT"]["wins"] == 1
+    assert abs(j.by_asset["BTC/USDT"]["net"] - (-150.0)) < 1e-9
+    assert j.by_asset["ETH/USDT"]["trades"] == 1 and abs(j.by_asset["ETH/USDT"]["net"] - 400.0) < 1e-9
+    s = j.summary_line()
+    assert "BTC/USDT" in s and "ETH/USDT" in s
+
+
+def test_per_asset_survives_state_roundtrip(tmp_path):
+    sp = tmp_path / "s.json"
+    j = Journal(state_path=sp); b = PaperBook()
+    j.record("EXIT", {"kind": "live", "asset": "ETH/USDT", "pnl": 400.0})
+    j.save_state(b, last_ts={})
+    j2 = Journal(state_path=sp); b2 = PaperBook()
+    j2.load_state(b2)
+    assert j2.by_asset["ETH/USDT"]["trades"] == 1 and abs(j2.by_asset["ETH/USDT"]["net"] - 400.0) < 1e-9
+
+
+def test_exit_without_asset_still_works():
+    # existing aggregate-only EXIT records (no 'asset') must not crash per-asset tracking
+    j = Journal()
+    j.record("EXIT", {"kind": "live", "pnl": 120.0})
+    assert j.live_trades == 1 and j.by_asset == {}

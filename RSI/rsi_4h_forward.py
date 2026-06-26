@@ -179,12 +179,18 @@ class Journal:
         self.live_trades = self.live_wins = 0; self.live_net = 0.0
         self.shadow_trades = self.shadow_wins = 0; self.shadow_net = 0.0
         self.skips = 0
+        self.by_asset = {}     # asset -> {"trades","wins","net"} for the LIVE leg
 
     def record(self, event, data):
         if event == "EXIT":
             if data.get("kind") == "live":
                 self.live_trades += 1; self.live_net += data["pnl"]
                 if data["pnl"] > 0: self.live_wins += 1
+                asset = data.get("asset")
+                if asset is not None:
+                    a = self.by_asset.setdefault(asset, {"trades": 0, "wins": 0, "net": 0.0})
+                    a["trades"] += 1; a["net"] += data["pnl"]
+                    if data["pnl"] > 0: a["wins"] += 1
             elif data.get("kind") == "shadow":
                 self.shadow_trades += 1; self.shadow_net += data["pnl"]
                 if data["pnl"] > 0: self.shadow_wins += 1
@@ -198,7 +204,7 @@ class Journal:
         return {"live_trades": self.live_trades, "live_wins": self.live_wins,
                 "live_net": self.live_net, "shadow_trades": self.shadow_trades,
                 "shadow_wins": self.shadow_wins, "shadow_net": self.shadow_net,
-                "skips": self.skips}
+                "skips": self.skips, "by_asset": self.by_asset}
 
     def save_state(self, book, last_ts):
         if self.state_path is None: return
@@ -221,8 +227,13 @@ class Journal:
 
     def summary_line(self):
         wr = (self.live_wins / self.live_trades * 100) if self.live_trades else 0.0
-        return (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
+        line = (f"trades {self.live_trades}  win {wr:.0f}%  net ${self.live_net:+,.0f}"
                 f"  | shadow hold48 ${self.shadow_net:+,.0f}  skipped {self.skips}")
+        for asset, a in sorted(self.by_asset.items()):
+            awr = (a["wins"] / a["trades"] * 100) if a["trades"] else 0.0
+            line += (f"\n    {asset:<10} {a['trades']:>3} trades  {awr:>3.0f}% win"
+                     f"  net ${a['net']:+,.0f}")
+        return line
 
 
 # ─── Orchestration ────────────────────────────────────────────────────────────
