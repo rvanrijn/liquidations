@@ -170,27 +170,28 @@ def test_ladder_survives_snapshot_restore():
     assert len(b2.ladders) == 1 and b2.ladders[0].partial_done and abs(b2.ladders[0].remaining - 0.5) < 1e-9
 
 
-def test_regime_shadow_only_opens_when_aligned():
+def test_regime_book_is_independent_of_live_position():
+    # a live counter-trend position must NOT block an aligned regime entry
     b = PaperBook()
-    b.enter("BTC/USDT", "LONG", 100.0, ts=0, regime_ok=False)   # not trend-aligned
-    assert len(b.regimes) == 0                                   # no regime shadow
-    b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))  # closes live
-    b.enter("BTC/USDT", "LONG", 100.0, ts=2, regime_ok=True)    # aligned
-    assert len(b.regimes) == 1
+    b.enter("BTC/USDT", "SHORT", 100.0, ts=0)        # live takes a (counter-trend) short
+    assert b.in_position("BTC/USDT") and not b.in_regime("BTC/USDT")
+    b.enter_regime("BTC/USDT", "LONG", 100.0, ts=0)  # aligned long still opens in regime book
+    assert b.in_regime("BTC/USDT")
+    assert b.enter_regime("BTC/USDT", "LONG", 101.0, ts=1) is None   # one regime pos per asset
 
 
 def test_regime_shadow_uses_live_bracket_and_books_regime_kind():
     b = PaperBook()
-    b.enter("BTC/USDT", "LONG", 100.0, ts=0, regime_ok=True)
+    b.enter_regime("BTC/USDT", "LONG", 100.0, ts=0)
     out = b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))  # TP at +3%
     reg = [t for t in out if t.kind == "regime"]
     assert len(reg) == 1 and reg[0].reason == "TP" and reg[0].exit_price == 103.0
-    assert len(b.regime_trades) == 1 and not b.regimes        # closed, list emptied
+    assert len(b.regime_trades) == 1 and not b.in_regime("BTC/USDT")   # closed
 
 
 def test_regime_shadow_survives_snapshot_restore():
     import json
-    b = PaperBook(); b.enter("BTC/USDT", "LONG", 100.0, ts=5, regime_ok=True)
+    b = PaperBook(); b.enter_regime("BTC/USDT", "LONG", 100.0, ts=5)
     snap = json.loads(json.dumps(b.snapshot()))
     b2 = PaperBook(); b2.restore(snap)
-    assert len(b2.regimes) == 1 and b2.regimes[0].entry_price == 100.0
+    assert b2.in_regime("BTC/USDT") and b2.regimes["BTC/USDT"].entry_price == 100.0

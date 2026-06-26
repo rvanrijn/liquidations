@@ -108,29 +108,43 @@ class PaperBook:
                  cap_bars=CAP_BARS, fee=FEE):
         self.capital = capital; self.stop_pct = stop_pct; self.tp_pct = tp_pct
         self.cap_bars = cap_bars; self.fee = fee
-        self.positions = {}        # asset -> Position | None
+        self.positions = {}        # asset -> Position | None  (live book)
         self.shadows = []          # open Shadow list (hold-48)
         self.ladders = []          # open Ladder list (scale-out)
-        self.regimes = []          # open Position list (EMA200 trend-aligned entries, live bracket)
+        self.regimes = {}          # asset -> Position | None  (regime book — INDEPENDENT of live)
         self.live_trades = []; self.shadow_trades = []; self.ladder_trades = []
         self.regime_trades = []; self.skips = 0
 
     def in_position(self, asset):
         return self.positions.get(asset) is not None
 
-    def enter(self, asset, side, price, ts, regime_ok=False):
+    def in_regime(self, asset):
+        return self.regimes.get(asset) is not None
+
+    def _bracket(self, side, price):
+        stop = price * (1 - self.stop_pct) if side == "LONG" else price * (1 + self.stop_pct)
+        tp = price * (1 + self.tp_pct) if side == "LONG" else price * (1 - self.tp_pct)
+        return stop, tp
+
+    def enter(self, asset, side, price, ts):
         if self.in_position(asset):
             self.skips += 1
             return None
-        stop = price * (1 - self.stop_pct) if side == "LONG" else price * (1 + self.stop_pct)
-        tp = price * (1 + self.tp_pct) if side == "LONG" else price * (1 - self.tp_pct)
+        stop, tp = self._bracket(side, price)
         pos = Position(asset, side, price, ts, stop, tp)
         self.positions[asset] = pos
         self.shadows.append(Shadow(asset, side, price, ts, stop))
         self.ladders.append(Ladder(asset, side, price, ts, stop))
-        if regime_ok:              # trend-aligned subset: same live bracket, tracked apart
-            self.regimes.append(Position(asset, side, price, ts, stop, tp))
         return pos
+
+    def enter_regime(self, asset, side, price, ts):
+        """Open the regime book's position — INDEPENDENT of the live book, so live
+        counter-trend trades don't block it (it wouldn't have taken them). Same bracket."""
+        if self.in_regime(asset):
+            return None
+        stop, tp = self._bracket(side, price)
+        self.regimes[asset] = Position(asset, side, price, ts, stop, tp)
+        return self.regimes[asset]
 
     def advance(self, asset, bar):
         """Process the live position + any shadows for `asset` on this bar.
@@ -149,10 +163,11 @@ class PaperBook:
             tr = self._exit_ladder(ld, bar)
             if tr:
                 self.ladder_trades.append(tr); self.ladders.remove(ld); out.append(tr)
-        for rp in [x for x in self.regimes if x.asset == asset]:
+        rp = self.regimes.get(asset)
+        if rp is not None:
             tr = self._exit_bracket(rp, bar, "regime")
             if tr:
-                self.regime_trades.append(tr); self.regimes.remove(rp); out.append(tr)
+                self.regime_trades.append(tr); self.regimes[asset] = None; out.append(tr)
         return out
 
     def _exit_live(self, p, bar):
@@ -223,7 +238,7 @@ class PaperBook:
             "positions": {a: (vars(p) if p else None) for a, p in self.positions.items()},
             "shadows": [vars(s) for s in self.shadows],
             "ladders": [vars(x) for x in self.ladders],
-            "regimes": [vars(p) for p in self.regimes],
+            "regimes": {a: (vars(p) if p else None) for a, p in self.regimes.items()},
             "skips": self.skips,
         }
 
@@ -232,7 +247,8 @@ class PaperBook:
                           for a, d in snap.get("positions", {}).items()}
         self.shadows = [Shadow(**d) for d in snap.get("shadows", [])]
         self.ladders = [Ladder(**d) for d in snap.get("ladders", [])]
-        self.regimes = [Position(**d) for d in snap.get("regimes", [])]
+        self.regimes = {a: (Position(**d) if d else None)
+                        for a, d in snap.get("regimes", {}).items()}
         self.skips = snap.get("skips", 0)
 
 
@@ -406,12 +422,13 @@ def process_asset(asset, candles, book, journal, last_ts):
         sig = latest_break(candles)
         if sig is not None:
             journal.record("SIGNAL", {"asset": asset, **sig})
+            aligned = _regime_aligned(sig["side"], [c[4] for c in candles])
+            if aligned and not book.in_regime(asset):     # regime book: independent of live state
+                book.enter_regime(asset, sig["side"], sig["close"], sig["ts"])
             if book.in_position(asset):
                 journal.record("SKIP", {"asset": asset, "side": sig["side"], "ts": sig["ts"]})
             else:
-                closes = [c[4] for c in candles]
-                aligned = _regime_aligned(sig["side"], closes)
-                pos = book.enter(asset, sig["side"], sig["close"], sig["ts"], regime_ok=aligned)
+                pos = book.enter(asset, sig["side"], sig["close"], sig["ts"])
                 journal.record("ENTRY", {"asset": asset, "side": sig["side"],
                                          "price": sig["close"], "tp": pos.tp_price,
                                          "sl": pos.stop_price, "regime": aligned, "ts": sig["ts"]})
@@ -572,10 +589,13 @@ def _strategy_trades(asset, years_back=9, include_shadows=False):
     book = PaperBook()
     for idx, row in enumerate(c):
         book.advance(asset, {"ts": row[0], "high": row[2], "low": row[3], "close": row[4]})
-        if idx in sig and not book.in_position(asset):
+        if idx in sig:
             aligned = idx >= REGIME_EMA and (
                 (closes[idx] > e200[idx]) if sig[idx] == "LONG" else (closes[idx] < e200[idx]))
-            book.enter(asset, sig[idx], row[4], row[0], regime_ok=aligned)
+            if aligned and not book.in_regime(asset):
+                book.enter_regime(asset, sig[idx], row[4], row[0])
+            if not book.in_position(asset):
+                book.enter(asset, sig[idx], row[4], row[0])
     if include_shadows:
         return book.live_trades + book.shadow_trades + book.ladder_trades + book.regime_trades
     return book.live_trades

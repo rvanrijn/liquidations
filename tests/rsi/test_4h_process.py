@@ -88,4 +88,4 @@ def test_aligned_break_opens_regime_shadow(monkeypatch):
                    "rsi": 40.0, "tl": 36.0, "cleared_by": 4.0})
     b = PaperBook(); j = Journal()
     process_asset("BTC/USDT", cs, b, j, {})
-    assert len(b.regimes) == 1                      # aligned long → regime shadow opened
+    assert b.in_regime("BTC/USDT")                  # aligned long → regime shadow opened
