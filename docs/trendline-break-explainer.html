@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The RSI trendline-break, explained — and why it doesn't pay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E7EBEA; --paper-2:#DEE4E1; --panel:#F1F4F2;
+  --ink:#131C1B; --ink-soft:#4B5854; --ink-faint:#8A958F;
+  --edge:#1C6B57; --edge-soft:#3E8A74;
+  --fee:#A83A2C; --fee-soft:#C56152;
+  --brass:#9C7A2A; --line:#C5CECA; --grid:rgba(19,28,27,.05);
+  --term:#0F1716; --term-glow:#4FB79A;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --disp:'Fraunces',Georgia,serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:26px 26px;
+  color:var(--ink); font-family:var(--sans); font-size:17px; line-height:1.6;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+.wrap{max-width:1040px;margin:0 auto;padding:0 28px}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-soft);display:flex;align-items:center;gap:.7em}
+.eyebrow::before{content:"";width:26px;height:2px;background:var(--ink);display:inline-block}
+.pos{color:var(--edge)} .neg{color:var(--fee)} .brass{color:var(--brass)} .ink-faint{color:var(--ink-faint)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* hero */
+.hero{padding:84px 0 52px;border-bottom:2px solid var(--ink)}
+.hero .eyebrow{margin-bottom:30px}
+h1{font-family:var(--disp);font-weight:600;font-size:clamp(2.5rem,6.6vw,4.8rem);line-height:1.0;letter-spacing:-.02em}
+h1 .l2{display:block;color:var(--fee);font-style:italic;font-weight:500}
+.dek{margin-top:22px;max-width:54ch;color:var(--ink-soft);font-size:1.07rem}
+.dek b{color:var(--ink);font-weight:600}
+
+/* sections */
+section{padding:58px 0;border-bottom:1px solid var(--line)}
+.sec-head{margin-bottom:26px}
+.sec-head .eyebrow{margin-bottom:16px}
+h2{font-family:var(--disp);font-weight:600;font-size:clamp(1.7rem,3.6vw,2.5rem);letter-spacing:-.015em;line-height:1.06;max-width:24ch}
+.lead{margin-top:14px;color:var(--ink-soft);max-width:62ch}
+
+/* figure */
+figure{margin:30px 0 6px}
+figure img{width:100%;display:block;border:1.5px solid var(--ink);background:var(--term)}
+figcaption{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;color:var(--ink-faint);margin-top:10px;padding-left:2px}
+
+/* numbered steps ledger */
+.steps{margin-top:30px;border-top:1px solid var(--line)}
+.step{display:grid;grid-template-columns:42px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line);align-items:start}
+.step .n{font-family:var(--disp);font-size:1.5rem;font-weight:600;color:var(--brass);line-height:1}
+.step h4{font-family:var(--sans);font-weight:600;font-size:1.05rem;margin-bottom:3px}
+.step p{color:var(--ink-soft);font-size:.97rem;max-width:60ch}
+.step code{font-family:var(--mono);font-size:.84em;background:var(--paper-2);padding:1px 5px;color:var(--ink)}
+
+/* mirror callout */
+.callout{background:var(--panel);border:1.5px solid var(--ink);padding:22px 24px;margin-top:26px;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center}
+.callout .glyph{font-family:var(--mono);font-size:1.6rem;font-weight:600;color:var(--fee);white-space:nowrap}
+.callout p{font-size:.98rem;color:var(--ink-soft)} .callout b{color:var(--ink)}
+
+/* verdict table */
+.vt{width:100%;border-collapse:collapse;font-family:var(--mono);border:1.5px solid var(--ink);margin-top:24px;font-size:.9rem}
+.vt th,.vt td{padding:12px 14px;text-align:right;border-bottom:1px solid var(--line)}
+.vt th{font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:500;background:var(--panel)}
+.vt td:first-child,.vt th:first-child{text-align:left}
+.vt tr:last-child td{border-bottom:0}
+.vt .insample td{background:rgba(28,107,87,.09)}
+.vt .win{color:var(--edge);font-weight:600} .vt .lose{color:var(--fee);font-weight:600}
+.vt .vc{font-weight:600}
+
+/* coda */
+.coda{padding:54px 0 44px;border-bottom:0}
+.coda p{font-family:var(--disp);font-size:clamp(1.3rem,3vw,1.95rem);font-weight:500;line-height:1.3;max-width:30ch;letter-spacing:-.01em}
+.coda .fine{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);letter-spacing:.05em;margin-top:28px;line-height:1.7}
+.coda .fine a{color:var(--ink-soft)}
+
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+
+@media (max-width:720px){
+  body{font-size:16px}
+  .callout{grid-template-columns:1fr;gap:10px}
+  .vt{font-size:.78rem}.vt th,.vt td{padding:9px 8px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">RSI trendline-break · how it works, and where it actually pays</div>
+    <h1>Dead on the 1-hour.<span class="l2" style="color:var(--edge)">Alive on the 4-hour.</span></h1>
+    <p class="dek">A tidy, mechanical trigger that fires on the RSI. On the 1-hour it's a <b>mirage</b> — nothing survives a real test. Slow the clock to <b>4 hours</b> and a genuine, out-of-sample-validated edge appears. This is the whole arc: where it broke, where it held, and the one number now deciding its fate.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">The mechanism</div>
+      <h2>The whole signal lives on the RSI, not price.</h2>
+      <p class="lead">One real example — a bullish break on BTC 1h. The price panel just marks where you'd enter; the bottom panel is where the logic happens.</p>
+    </div>
+    <figure>
+      <img src="trendline-break-anatomy.png" alt="Annotated RSI trendline break: pivots, descending resistance line, the break bar, cleared_by, and the resulting LONG entry">
+      <figcaption>BTC/USDT 1h · a bullish break (2026-06-23): RSI crosses above a descending resistance line → LONG.</figcaption>
+    </figure>
+    <div class="steps">
+      <div class="step"><div class="n">1</div><div><h4>Pivot high</h4><p>A strict local peak in RSI — higher than the 3 bars on each side. The scanner confirms these as they form.</p></div></div>
+      <div class="step"><div class="n">2</div><div><h4>A lower pivot high → the trendline</h4><p>The next confirmed pivot prints below the first. Two descending peaks define a <b>resistance trendline</b> — drawn through the last 2 pivot highs.</p></div></div>
+      <div class="step"><div class="n">3</div><div><h4>The break</h4><p>On the bar where RSI <b>closes above</b> that line (having been at or below it the bar before), a bullish break fires → <span class="pos">LONG</span>.</p></div></div>
+      <div class="step"><div class="n">4</div><div><h4><code>cleared_by</code></h4><p>How far RSI punched through the line — the "break strength" column in the signal tables. Here, 4.3 RSI points.</p></div></div>
+    </div>
+    <div class="callout">
+      <div class="glyph">▲▲ → break&nbsp;down</div>
+      <p>The <b>short side is the exact mirror</b> (below): two <em>ascending</em> pivot <em>lows</em> form a support line; when RSI closes <em>below</em> it → bearish break → <span class="neg">SHORT</span>. That's the entire algorithm — Wilder RSI → strict 3-bar pivots → line through the last 2 → fire on the cross. Simple enough to run live; it triggers about <b>3 times a day</b>.</p>
+    </div>
+    <figure>
+      <img src="trendline-break-anatomy-short.png" alt="Annotated RSI bearish break: ascending support line through two pivot lows, RSI closes below it, and the resulting SHORT entry">
+      <figcaption>BTC/USDT 1h · the mirror, a bearish break (2026-03-23): RSI crosses below an ascending support line → SHORT.</figcaption>
+    </figure>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">Does it make money?</div>
+      <h2>Two years, 2,130 signals, every exit rule — mostly red.</h2>
+      <p class="lead">Run every signal through a stop-width × exit-rule grid ($5k/trade, 0.02%/side). If the raw trigger had an edge, the grid would be green. It isn't: <b>10 of 35 cells positive, median −$3.0k.</b> The lone bright corner is the single luckiest knob on a losing surface — worth +0.05% on capital over two years.</p>
+    </div>
+    <figure>
+      <img src="rsi-sweep-2y.png" alt="Heatmap of net profit across stop width and exit rule for 2130 signals — mostly red">
+      <figcaption>net $ across stop×exit · the dashed boxes mark where a tiny 18-trade sample looked profitable — at scale, red.</figcaption>
+    </figure>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">The filter that looked like the fix</div>
+      <h2>Add a trend filter and it snaps from red to green.</h2>
+      <p class="lead">Take only breaks aligned with the 200-EMA (long above / short below). In-sample on BTC it was startling — <span class="pos">29/35 cells green with the trend</span>, <span class="neg">0/35 against it</span>. Stop-width-independent, corroborated by RSI level. It looked like a genuine, structural edge.</p>
+    </div>
+    <figure>
+      <img src="rsi-trend-filter-grid.png" alt="Two heatmaps side by side: with-trend mostly green, against-trend entirely red">
+      <figcaption>WITH the EMA200 trend (left) vs AGAINST it (right) — the split that looked too good to be a coincidence.</figcaption>
+    </figure>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">Out of sample, it died</div>
+      <h2>The clean split existed in exactly one window.</h2>
+      <p class="lead">The only honest test is data the filter never saw. Re-run it on other BTC windows and other coins. The separation vanishes — and on ETH it <b>inverts</b>.</p>
+    </div>
+    <table class="vt">
+      <thead><tr><th>test</th><th>with-trend</th><th>against-trend</th><th>verdict</th></tr></thead>
+      <tbody>
+        <tr class="insample"><td>BTC 2024–26 · in-sample</td><td class="win">28/35 · +$3.4k</td><td class="lose">0/35 · −$5.1k</td><td class="vc">the clean split</td></tr>
+        <tr><td>BTC 2022–24 · OOS time</td><td>20/35 · +$1.6k</td><td>20/35 · +$0.3k</td><td class="ink-faint">no separation</td></tr>
+        <tr><td>BTC 2020–22 · OOS time</td><td>33/35 · +$5.4k</td><td>19/35 · +$0.4k</td><td class="ink-faint">no separation</td></tr>
+        <tr><td>ETH 2024–26 · OOS asset</td><td>18/35 · +$0.5k</td><td class="win">35/35 · +$5.2k</td><td class="neg vc">inverted</td></tr>
+        <tr><td>SOL 2024–26 · OOS asset</td><td>19/35 · +$0.1k</td><td>15/35 · −$0.6k</td><td class="ink-faint">noise</td></tr>
+        <tr><td>BNB 2024–26 · OOS asset</td><td class="lose">10/35 · −$1.8k</td><td class="lose">2/35 · −$2.5k</td><td class="ink-faint">both red</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin-top:24px">The "29 vs 0" split was overfit to one BTC regime where trend-alignment happened to coincide with the dominant move. Out of sample that coincidence breaks; on a different asset it reverses outright. The winning <em>side</em> flips every window too — no consistent long or short edge either. <b>Everything so far has been the 1-hour.</b></p>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">The turn · change the clock</div>
+      <h2>On the 4-hour, it's a different animal.</h2>
+      <p class="lead">Same scanner, same grid, three timeframes. The red 1-hour surface turns <b>green</b> as you slow it down — slower bars make the pivots significant and the trendlines mean something (the "the line is too twitchy" instinct, fixed by slowing the clock instead of redrawing it). The 4-hour is the sweet spot; the 8-hour is mostly market drift.</p>
+    </div>
+    <table class="vt">
+      <thead><tr><th>timeframe</th><th>grid cells +</th><th>median</th><th>read</th></tr></thead>
+      <tbody>
+        <tr><td>1h</td><td class="lose">15/35</td><td class="lose">−$0.7k</td><td class="ink-faint">no edge — the whole story above</td></tr>
+        <tr class="insample"><td>4h</td><td class="win">28/35</td><td class="win">+$1.7k</td><td class="vc">majority green</td></tr>
+        <tr><td>8h</td><td class="win">30/35</td><td>+$2.8k</td><td class="ink-faint">green, but mostly drift</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">This time it holds</div>
+      <h2>Out of sample, across assets, and beating random entry.</h2>
+      <p class="lead">The 1-hour "edge" died the moment it saw new data. The 4-hour doesn't. It stays green across independent BTC windows back to 2018 and on ETH — and, the decisive test, it <b>beats a random-entry control</b> (same trade count, same long/short mix, identical exits) in <span class="pos">6 of 7</span> cases. The gap below is real edge over drift, and it shows up in <em>down</em> markets via the short side — so it isn't just long-beta.</p>
+    </div>
+    <figure>
+      <img src="rsi-4h-oos-drift.png" alt="Bar chart: 4h signal vs random entry across BTC windows and assets — signal beats random in 6 of 7 cases">
+      <figcaption>4h · signal (green) vs random entry (grey), identical exits · the gap = edge over drift · strong on BTC &amp; ETH, weak on SOL, fails on BNB.</figcaption>
+    </figure>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">Where the edge lives now</div>
+      <h2>Alive on ETH. BTC is in the longest drawdown of its life.</h2>
+      <p class="lead">Eight years of equity, identical rule. The curves track until mid-2025 — then they split: ETH prints a fresh high in April 2026 while BTC rolls over into a 348-day drawdown. Because <b>ETH didn't decay in sync</b>, it isn't a market-wide regime — BTC's weakness is BTC-specific (a regime shift, or alpha decay on the most-crowded asset first). The edge is healthy; it's just migrated.</p>
+    </div>
+    <figure>
+      <img src="rsi-4h-btc-vs-eth-equity.png" alt="BTC and ETH equity curves on the 4h rule — ETH climbs to a fresh high while BTC plateaus into a drawdown">
+      <figcaption>BTC (green) vs ETH (blue) · 4h equity 2018–2026 · near-identical full-history, but they diverge in the shaded recent zone — ETH up, BTC stalled.</figcaption>
+    </figure>
+  </section>
+
+  <section class="reveal">
+    <div class="sec-head">
+      <div class="eyebrow">No longer a backtest</div>
+      <h2>Live now — watching the one number that decides it.</h2>
+      <p class="lead">Backtesting is exhausted; the rest is forward proof. A paper trader trades every BTC + ETH 4h break (TP+3% / −2% / 8-day), logs the per-asset split, and recomputes BTC's drawdown against a hard line: its worst-ever drawdown lasted <b>394 days, then recovered</b>. If BTC crosses 394 without a new equity high, the edge has likely decayed and the strategy stands down on BTC — while ETH keeps running.</p>
+    </div>
+    <figure>
+      <img src="rsi-4h-btc-equity.png" alt="BTC 4h strategy equity curve with an underwater drawdown panel — the recent drawdown approaches the historical maximum">
+      <figcaption>BTC 4h equity (top) + drawdown (bottom) · the curve climbs to a July-2025 peak then rolls over · the current red drawdown is nearly as deep and long as the worst-ever — the line the forward tester watches.</figcaption>
+    </figure>
+    <div class="callout">
+      <div class="glyph brass" style="font-family:var(--mono)">348 / 394</div>
+      <p><b>The decay line.</b> ~46 days of BTC drawdown left before it exceeds anything the strategy has survived. <span class="pos">ETH sits at 66/394 — healthy.</span> The forward tester flags the crossing automatically, so the call gets made by the data, not a hunch.</p>
+    </div>
+  </section>
+
+  <section class="coda">
+    <p>A real edge — but only on the right timeframe, in the right assets, watched for the day it stops being real.</p>
+    <div class="fine">
+      Wilder RSI(14) · 3-bar pivots · line through last 2 pivots · BTC + ETH 4h · TP+3% / −2% / 8-day<br>
+      Verdict: no edge on 1h (raw, exit-tuned, or EMA200-filtered — all died out-of-sample). A genuine, OOS- and drift-validated edge on 4h, concentrated in BTC &amp; ETH. Alive on ETH; BTC under a 394-day decay watch. Now forward-testing live — the data, not a hunch, makes the next call.<br>
+      Figures: trendline-break-anatomy.png · rsi-sweep-2y.png · rsi-trend-filter-grid.png · rsi-4h-oos-drift.png · rsi-4h-btc-vs-eth-equity.png
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function(){
+  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    document.querySelectorAll('.reveal').forEach(function(r){r.classList.add('in')});return;
+  }
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});
+  },{threshold:.12,rootMargin:'0px 0px -6% 0px'});
+  document.querySelectorAll('.reveal').forEach(function(r){io.observe(r)});
+})();
+</script>
+</body>
+</html>
