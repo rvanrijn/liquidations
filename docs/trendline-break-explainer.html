@@ -54,6 +54,14 @@ figure{margin:30px 0 6px}
 figure img{width:100%;display:block;border:1.5px solid var(--ink);background:var(--term)}
 figcaption{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;color:var(--ink-faint);margin-top:10px;padding-left:2px}
 
+/* terminal readout (mirrors the rsidash dashboard) */
+.term{background:var(--term);border:1.5px solid var(--ink);padding:18px 20px;margin-top:22px;font-family:var(--mono);font-size:.84rem;line-height:1.75;color:#9FB3AC;overflow-x:auto;white-space:nowrap}
+.term .prompt{color:#5f726d;display:block;margin-bottom:8px}
+.term b{color:#EAF1EE;font-weight:600}
+.term .full-amber{color:var(--brass)} .term .full-green{color:var(--term-glow)}
+.term .empty{color:#2a3a37}
+.term .gloss{color:#5f726d}
+
 /* numbered steps ledger */
 .steps{margin-top:30px;border-top:1px solid var(--line)}
 .step{display:grid;grid-template-columns:42px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line);align-items:start}
@@ -230,6 +238,12 @@ figcaption{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;color:v
       <div class="glyph brass" style="font-family:var(--mono)">348 / 394</div>
       <p><b>Dial 1 · Decay line.</b> BTC's worst-ever drawdown lasted 394 days, then recovered. It's at <b>348</b> — ~46 days of slack before it exceeds anything the strategy has survived. <span class="pos">ETH: 66/394, healthy.</span> Cross it without a new high → stand down BTC, keep ETH.</p>
     </div>
+    <div class="term">
+      <span class="prompt">$ rsidash  ·  decay watch — drawdown days vs the 394-day line</span>
+      <div><b>BTC</b>  <span class="full-amber">████████████████████████████</span><span class="empty">────</span>  <span class="brass">348/394d</span>  <span class="gloss">· 46 days to the line</span></div>
+      <div><b>ETH</b>  <span class="full-green">█████</span><span class="empty">───────────────────────────</span>  <span class="pos">66/394d</span>  <span class="gloss">· healthy, nowhere near</span></div>
+    </div>
+    <p class="lead" style="margin-top:18px">This isn't a static number in a report — it's a <b>live gauge</b>. The tester re-derives BTC's full strategy equity from fresh market data on every 4-hour poll, so the bar advances on its own and <b>auto-clears the moment BTC prints a new equity high</b>. If instead it fills past 394 without recovering, the dashboard flags <span class="neg">⚠ DECAYED</span> and the rule is mechanical: stand down BTC, keep running ETH. The call gets made by the gauge, not a gut feeling — and you watch it deploy-and-forget, every few hours, in one terminal command.</p>
     <div class="callout">
       <div class="glyph brass" style="font-family:var(--mono)">BTC / ETH</div>
       <p><b>Dial 2 · Per-asset split.</b> Live P&amp;L broken out by coin, so a fading BTC can't hide inside a healthy ETH aggregate — and you can down-weight the laggard while the edge still works where it works.</p>
