@@ -2,6 +2,7 @@
 
 Run:  python -m pytest tests/rsi/test_4h_book.py -v
 """
+import json
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../RSI"))
 
@@ -89,3 +90,39 @@ def test_snapshot_restore_roundtrip():
     assert b2.in_position("BTC/USDT")
     assert b2.positions["BTC/USDT"].entry_price == 100.0
     assert len(b2.shadows) == 1
+
+
+def test_bars_survive_json_restart_and_cap_fires_at_right_count():
+    # The load-bearing cron property: bars must survive a JSON state round-trip so
+    # the 8-day cap counts from the correct absolute bar after a process restart.
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0)
+    for k in range(1, 11):                      # 10 bars, no stop/TP
+        b.advance("BTC/USDT", bar(k, hi=101.0, lo=99.5, close=100.5))
+    assert b.positions["BTC/USDT"].bars == 10
+    snap = json.loads(json.dumps(b.snapshot()))  # exactly what save_state/load_state does
+    b2 = PaperBook(); b2.restore(snap)
+    assert b2.positions["BTC/USDT"].bars == 10
+    out = []
+    for k in range(11, 49):                     # advance to absolute bar 48
+        out += b2.advance("BTC/USDT", bar(k, hi=101.0, lo=99.5, close=100.5))
+    live = [t for t in out if t.kind == "live"]
+    assert len(live) == 1 and live[0].reason == "CAP"   # CAP at bar 48, not mis-counted
+
+
+def test_short_stop_before_tp_when_both_touch():
+    b = PaperBook()
+    b.enter("ETH/USDT", "SHORT", 100.0, ts=0)   # stop 102, tp 97
+    out = b.advance("ETH/USDT", bar(1, hi=103.0, lo=96.0, close=99.0))  # both touched
+    live = [t for t in out if t.kind == "live"][0]
+    assert live.reason == "STOP" and abs(live.exit_price - 102.0) < 1e-9 and live.pnl < 0
+
+
+def test_two_assets_advance_independently():
+    b = PaperBook()
+    b.enter("BTC/USDT", "LONG", 100.0, ts=0)
+    b.enter("ETH/USDT", "SHORT", 200.0, ts=0)
+    # one bar that TPs BTC (>=103) but does nothing to ETH
+    out = b.advance("BTC/USDT", bar(1, hi=103.5, lo=99.5, close=103.2))
+    assert any(t.kind == "live" and t.reason == "TP" for t in out)
+    assert not b.in_position("BTC/USDT") and b.in_position("ETH/USDT")
