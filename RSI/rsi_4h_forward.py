@@ -8,7 +8,8 @@ hold-48 shadow alongside. See docs/superpowers/specs/2026-06-26-rsi-4h-forward-t
 Usage:
   python RSI/rsi_4h_forward.py once     # single poll (deploy on a 4h cron)
   python RSI/rsi_4h_forward.py run      # loop, sleeping to each 4h close
-  python RSI/rsi_4h_forward.py status   # print accumulated stats from state
+  python RSI/rsi_4h_forward.py status   # one-line stats + decay line (scriptable)
+  python RSI/rsi_4h_forward.py dash     # rich terminal dashboard (cards, gauges, recent)
   python RSI/rsi_4h_forward.py replay --asset ETH/USDT --days 365   # offline reconcile
 
 State + log live in RSI/data/ (gitignored):
@@ -368,13 +369,129 @@ def decay_check(asset="BTC/USDT", line_days=DECAY_LINE_DAYS):
     return f"{flag}{asset} 4h strategy ({len(trades)} trades, eq ${eq[-1]:,.0f}): {msg}"
 
 
+def _decay_metrics(asset, line_days=DECAY_LINE_DAYS):
+    """(days_underwater, crossed, equity, n_trades) for `asset`, or None."""
+    trades = _strategy_trades(asset)
+    if len(trades) < 30:
+        return None
+    tt = np.array([t.exit_ts for t in trades])
+    eq = CAPITAL + np.cumsum(np.array([t.pnl for t in trades]))
+    days, crossed, _msg = _decay_status(eq, tt, _time.time() * 1000, line_days)
+    return days, crossed, float(eq[-1]), len(trades)
+
+
+def _recent_events(path, n=8):
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return []
+    out = []
+    for ln in lines[-n * 4:]:
+        try:
+            e = json.loads(ln)
+            if e.get("event") in ("ENTRY", "EXIT", "SKIP"):
+                out.append(e)
+        except Exception:  # noqa: BLE001
+            pass
+    return out[-n:]
+
+
+def render_dash(state="RSI/data/rsi_4h_state.json", events="RSI/data/rsi_4h_events.jsonl"):
+    """Polished terminal dashboard (rich). Imports rich lazily so the core stays dep-free."""
+    from datetime import datetime
+    from rich.console import Console, Group
+    from rich.panel import Panel
+    from rich.columns import Columns
+    from rich.table import Table
+    from rich.text import Text
+    from rich import box
+
+    EDGE, FEE, BRASS, GREY = "#2ECC9A", "#E0654F", "#C7972F", "grey42"
+    sign = lambda v: EDGE if v > 0 else (FEE if v < 0 else "white")
+    con = Console()
+    book = PaperBook(); j = Journal(state_path=state); j.load_state(book)
+    wr = (j.live_wins / j.live_trades * 100) if j.live_trades else 0.0
+    gap = j.shadow_net - j.live_net
+    n_open = sum(1 for p in book.positions.values() if p)
+
+    def card(title, big, sub, c):
+        b = Text(); b.append(big, style=f"bold {c}"); b.append("\n" + sub, style="dim")
+        return Panel(b, title=f"[{GREY}]{title}[/]", box=box.ROUNDED, border_style=GREY, padding=(0, 1))
+
+    cards = Columns([
+        card("LIVE P&L", f"${j.live_net:+,.0f}", f"{j.live_trades} trades · {wr:.0f}% win", sign(j.live_net)),
+        card("LET-RUN EDGE  Δ", f"${gap:+,.0f}", "hold-48 vs live TP+3", sign(gap)),
+        card("OPEN · SKIPS", f"{n_open} open", f"{j.skips} skipped", BRASS),
+    ], equal=True, expand=True)
+
+    at = Table(box=box.SIMPLE_HEAVY, expand=True, title="[dim]live P&L by asset[/]", title_justify="left")
+    for c, ju in [("asset", "left"), ("trades", "right"), ("win%", "right"), ("net $", "right")]:
+        at.add_column(c, justify=ju)
+    if j.by_asset:
+        for a, d in sorted(j.by_asset.items()):
+            awr = (d["wins"] / d["trades"] * 100) if d["trades"] else 0.0
+            at.add_row(a, str(d["trades"]), f"{awr:.0f}%", Text(f"${d['net']:+,.0f}", style=sign(d["net"])))
+    else:
+        at.add_row("—", "0", "—", "$0  [dim](no trades yet)[/]")
+
+    def gauge(label, days, line, eq, crossed):
+        frac = min(days / line, 1.0); W = 32; fill = int(round(frac * W))
+        c = EDGE if frac < 0.7 else (BRASS if frac < 0.9 else FEE)
+        t = Text(); t.append(f"{label:<4} ", style="bold")
+        t.append("█" * fill, style=c); t.append("─" * (W - fill), style="grey30")
+        t.append(f"  {days:.0f}/{line:.0f}d", style=c)
+        t.append("  ⚠ DECAYED" if crossed else "", style=f"bold {FEE}")
+        t.append(f"   eq ${eq:,.0f}", style="dim")
+        return t
+
+    rows = []
+    for a in ASSETS:
+        try:
+            m = _decay_metrics(a)
+            if m:
+                days, crossed, eq, _n = m
+                rows.append(gauge(a.split("/")[0], days, DECAY_LINE_DAYS, eq, crossed))
+        except Exception as e:  # noqa: BLE001
+            rows.append(Text(f"{a}: (market data unavailable — {e})", style="dim"))
+    decay = Panel(Group(*rows) if rows else Text("computing…", style="dim"),
+                  title=f"[{GREY}]decay watch · drawdown days vs the 394-day line[/]",
+                  border_style=GREY, box=box.ROUNDED)
+
+    evs = _recent_events(events)
+    rt = Table(box=box.SIMPLE, expand=True, title="[dim]recent[/]", title_justify="left")
+    for c, ju in [("time", "left"), ("event", "left"), ("asset", "left"), ("side", "left"), ("detail", "right")]:
+        rt.add_column(c, justify=ju)
+    for e in evs:
+        t = datetime.fromtimestamp(e.get("ts", 0) / 1000).strftime("%m-%d %H:%M")
+        ev = e["event"]
+        if ev == "EXIT":
+            detail = Text(f"${e.get('pnl', 0):+,.0f} {e.get('reason', '')}", style=sign(e.get("pnl", 0)))
+            evstyle = sign(e.get("pnl", 0))
+        elif ev == "ENTRY":
+            detail = Text(f"@ {e.get('price', 0):,.0f}"); evstyle = EDGE
+        else:
+            detail = Text("—"); evstyle = "dim"
+        rt.add_row(t, Text(ev, style=evstyle), e.get("asset", ""), e.get("side", ""), detail)
+
+    con.print()
+    con.rule(f"[bold]RSI 4h FORWARD TEST[/]  ·  BTC + ETH  ·  {datetime.now():%Y-%m-%d %H:%M}", style=BRASS)
+    con.print(cards)
+    con.print(at)
+    con.print(decay)
+    if evs:
+        con.print(rt)
+    con.print(Text("  the data, not a hunch, makes the next call.", style="dim italic"))
+
+
 def main():
     p = argparse.ArgumentParser(description="4h RSI trendline-break forward test")
-    p.add_argument("mode", choices=["once", "run", "replay", "status"], nargs="?", default="once")
+    p.add_argument("mode", choices=["once", "run", "replay", "status", "dash"], nargs="?", default="once")
     p.add_argument("--asset", default="BTC/USDT")
     p.add_argument("--days", type=int, default=120)
     a = p.parse_args()
     if a.mode == "run": run_loop()
+    elif a.mode == "dash": render_dash()
     elif a.mode == "replay": replay(a.asset, a.days)
     elif a.mode == "status":
         b = PaperBook(); j = Journal(state_path="RSI/data/rsi_4h_state.json")
