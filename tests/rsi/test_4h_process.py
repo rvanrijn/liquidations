@@ -89,3 +89,21 @@ def test_aligned_break_opens_regime_shadow(monkeypatch):
     b = PaperBook(); j = Journal()
     process_asset("BTC/USDT", cs, b, j, {})
     assert b.in_regime("BTC/USDT")                  # aligned long → regime shadow opened
+
+
+def test_run_once_heartbeat_pushes(monkeypatch, tmp_path):
+    import rsi_4h_forward as m
+    monkeypatch.setattr(m, "fetch_closed", lambda asset, bars=None: [])   # no data → empty poll
+    sent = []
+    monkeypatch.setattr(m, "telegram_notify", lambda msg: sent.append(msg) or True)
+    m.run_once(events=str(tmp_path / "e.jsonl"), state=str(tmp_path / "s.json"), heartbeat=True)
+    assert len(sent) == 1 and "RSI 4h poll" in sent[0]
+
+
+def test_run_once_without_heartbeat_is_silent(monkeypatch, tmp_path):
+    import rsi_4h_forward as m
+    monkeypatch.setattr(m, "fetch_closed", lambda asset, bars=None: [])
+    sent = []
+    monkeypatch.setattr(m, "telegram_notify", lambda msg: sent.append(msg) or True)
+    m.run_once(events=str(tmp_path / "e.jsonl"), state=str(tmp_path / "s.json"))   # heartbeat off
+    assert sent == []

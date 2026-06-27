@@ -447,7 +447,7 @@ def fetch_closed(asset, bars=SEED_BARS):
     return [c for c in raw if c[0] + 4 * 3600 * 1000 <= now_ms]   # fully closed only
 
 
-def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state.json"):
+def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state.json", heartbeat=False):
     os.makedirs("RSI/data", exist_ok=True)
     book = PaperBook(); j = Journal(events_path=events, state_path=state)
     j.notify_entries = True          # push a Telegram alert on each new live entry
@@ -459,7 +459,10 @@ def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state
             print(f"fetch failed {asset}: {e}"); continue
         last_ts = process_asset(asset, candles, book, j, last_ts)
     j.save_state(book, last_ts)
-    print(j.summary_line())
+    summary = j.summary_line()
+    print(summary)
+    if heartbeat:                    # one Telegram ping per poll, regardless of trades
+        telegram_notify("🫀 RSI 4h poll\n" + summary.split("\n")[0])
 
 
 def run_loop():
@@ -797,6 +800,7 @@ def main():
     p.add_argument("--out", default="RSI/data/rsi_4h_trades.csv", help="export CSV path")
     p.add_argument("--shadows", action="store_true", help="export: also include hold-48 + scale-out ladder trades")
     p.add_argument("--push", action="store_true", help="compare: also push the verdict to Telegram")
+    p.add_argument("--heartbeat", action="store_true", help="once: push a Telegram ping every poll, not just on entries")
     a = p.parse_args()
     if a.mode == "run": run_loop()
     elif a.mode == "export": export_trades(days=a.days, out=a.out, shadows=a.shadows)
@@ -815,7 +819,7 @@ def main():
             print(decay_check("BTC/USDT"))
         except Exception as e:                          # noqa: BLE001 — offline status still works
             print(f"(decay check skipped — {e})")
-    else: run_once()
+    else: run_once(heartbeat=a.heartbeat)
 
 
 if __name__ == "__main__":

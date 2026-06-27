@@ -17,7 +17,7 @@ REPO="/Users/rvanrijn/Developer/test/liquidations"
 PY="/Users/rvanrijn/miniconda3/bin/python3"
 ENVSRC='{ [ -f RSI/data/tg.env ] && . RSI/data/tg.env || true; }'
 
-POLL="5 */4 * * * cd $REPO && $ENVSRC && $PY RSI/rsi_4h_forward.py once >> RSI/data/rsi_4h_cron.log 2>&1"
+POLL="5 */4 * * * cd $REPO && $ENVSRC && $PY RSI/rsi_4h_forward.py once --heartbeat >> RSI/data/rsi_4h_cron.log 2>&1"
 CMP="0 9 3 7 * cd $REPO && $ENVSRC && $PY RSI/rsi_4h_forward.py compare --push >> RSI/data/rsi_4h_cron.log 2>&1"
 
 cur="$(crontab -l 2>/dev/null || true)"
