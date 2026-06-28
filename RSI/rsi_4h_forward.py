@@ -292,6 +292,17 @@ def _format_entry_msg(d):
             f"SL  {sl:,.2f}  ({_price_move(price, sl)})")
 
 
+def _format_exit_msg(d):
+    """Render a live EXIT event into a phone-friendly Telegram message."""
+    side = d.get("side", "?"); reason = d.get("reason", "")
+    asset = d.get("asset", "?").split("/")[0]
+    pnl = d.get("pnl", 0.0); ret = d.get("ret", 0.0) * 100
+    emoji = "✅" if pnl > 0 else "❌"
+    return (f"{emoji} {asset} {side} closed · {reason}\n"
+            f"exit  {d.get('exit', 0):,.2f}\n"
+            f"P&L  ${pnl:+,.0f}  ({ret:+.2f}%)")
+
+
 # ─── Journal ─────────────────────────────────────────────────────────────────
 
 class Journal:
@@ -306,6 +317,7 @@ class Journal:
         self.skips = 0
         self.by_asset = {}     # asset -> {"trades","wins","net"} for the LIVE leg
         self.notify_entries = False   # live runner sets True; replay/status/dash stay silent
+        self.notify_exits = False     # ditto — push a Telegram when a live position closes
 
     def record(self, event, data):
         if event == "EXIT":
@@ -333,6 +345,8 @@ class Journal:
                 f.write(json.dumps({"event": event, **data}) + "\n")
         if event == "ENTRY" and self.notify_entries:
             telegram_notify(_format_entry_msg(data))
+        if event == "EXIT" and data.get("kind") == "live" and self.notify_exits:
+            telegram_notify(_format_exit_msg(data))
 
     def _counters(self):
         return {"live_trades": self.live_trades, "live_wins": self.live_wins,
@@ -451,6 +465,7 @@ def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state
     os.makedirs("RSI/data", exist_ok=True)
     book = PaperBook(); j = Journal(events_path=events, state_path=state)
     j.notify_entries = True          # push a Telegram alert on each new live entry
+    j.notify_exits = True            # …and when a live position closes (TP/STOP/CAP)
     last_ts = j.load_state(book)
     for asset in ASSETS:
         try:

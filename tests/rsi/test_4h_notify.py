@@ -40,9 +40,25 @@ def test_record_entry_pushes_only_when_enabled(monkeypatch):
     assert len(sent) == 1 and "BTC LONG" in sent[0]
 
 
-def test_record_exit_never_pushes(monkeypatch):
+def test_exit_pushes_only_live_and_only_when_enabled(monkeypatch):
     sent = []
     monkeypatch.setattr(F, "telegram_notify", lambda text: sent.append(text) or True)
-    j = Journal(); j.notify_entries = True
-    j.record("EXIT", {"asset": "BTC/USDT", "kind": "live", "pnl": 50.0})
-    assert sent == []                          # only ENTRY alerts, not exits
+
+    j = Journal(); j.notify_entries = True              # exits NOT enabled yet
+    j.record("EXIT", {"asset": "BTC/USDT", "kind": "live", "reason": "TP", "pnl": 50.0, "ret": 0.01})
+    assert sent == []                                   # entry-only flag → no exit push
+
+    j.notify_exits = True
+    j.record("EXIT", {"asset": "ETH/USDT", "kind": "shadow", "reason": "HOLD", "pnl": 9.0, "ret": 0.1})
+    j.record("EXIT", {"asset": "BTC/USDT", "kind": "ladder", "reason": "CAP", "pnl": 9.0, "ret": 0.1})
+    assert sent == []                                   # shadow/ladder exits never push
+    j.record("EXIT", {"asset": "BTC/USDT", "kind": "live", "reason": "TP", "pnl": 120.0, "ret": 0.024})
+    assert len(sent) == 1 and "BTC" in sent[0] and "closed" in sent[0]
+
+
+def test_format_exit_msg_win_and_loss():
+    from rsi_4h_forward import _format_exit_msg
+    w = _format_exit_msg({"asset": "BTC/USDT", "side": "SHORT", "reason": "TP", "exit": 58370.0, "pnl": 148.0, "ret": 0.0296})
+    assert "✅" in w and "BTC SHORT closed · TP" in w and "$+148" in w
+    l = _format_exit_msg({"asset": "ETH/USDT", "side": "SHORT", "reason": "STOP", "exit": 1610.0, "pnl": -100.0, "ret": -0.02})
+    assert "❌" in l and "$-100" in l
