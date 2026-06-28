@@ -107,3 +107,24 @@ def test_run_once_without_heartbeat_is_silent(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "telegram_notify", lambda msg: sent.append(msg) or True)
     m.run_once(events=str(tmp_path / "e.jsonl"), state=str(tmp_path / "s.json"))   # heartbeat off
     assert sent == []
+
+
+def test_heartbeat_lists_open_positions(monkeypatch, tmp_path):
+    import rsi_4h_forward as m
+    state = str(tmp_path / "s.json"); events = str(tmp_path / "e.jsonl")
+    b = m.PaperBook(); b.enter("BTC/USDT", "SHORT", 60000.0, ts=1)       # seed an open short
+    m.Journal(state_path=state).save_state(b, {"BTC/USDT": 1})
+    monkeypatch.setattr(m, "fetch_closed", lambda asset, bars=None: [])  # no new bars
+    sent = []
+    monkeypatch.setattr(m, "telegram_notify", lambda msg: sent.append(msg) or True)
+    m.run_once(events=events, state=state, heartbeat=True)
+    assert sent and "open:" in sent[0] and "BTC SHORT" in sent[0]
+
+
+def test_heartbeat_flat_when_no_positions(monkeypatch, tmp_path):
+    import rsi_4h_forward as m
+    monkeypatch.setattr(m, "fetch_closed", lambda asset, bars=None: [])
+    sent = []
+    monkeypatch.setattr(m, "telegram_notify", lambda msg: sent.append(msg) or True)
+    m.run_once(events=str(tmp_path / "e.jsonl"), state=str(tmp_path / "s.json"), heartbeat=True)
+    assert sent and "open: flat" in sent[0]

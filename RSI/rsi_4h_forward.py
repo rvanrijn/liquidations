@@ -462,7 +462,11 @@ def run_once(events="RSI/data/rsi_4h_events.jsonl", state="RSI/data/rsi_4h_state
     summary = j.summary_line()
     print(summary)
     if heartbeat:                    # one Telegram ping per poll, regardless of trades
-        telegram_notify("🫀 RSI 4h poll\n" + summary.split("\n")[0])
+        msg = "🫀 RSI 4h poll\n" + summary.split("\n")[0]
+        opens = [f"{a.split('/')[0]} {p.side} @{p.entry_price:,.0f} ({p.bars}/{CAP_BARS}b)"
+                 for a, p in book.positions.items() if p]
+        msg += "\nopen: " + (", ".join(opens) if opens else "flat")
+        telegram_notify(msg)
 
 
 def run_loop():
